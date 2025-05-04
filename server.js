@@ -100,6 +100,45 @@ app.get('/video', async (req, res) => {
     }
 });
 
+app.get('/iframe', async (req, res) => {
+  const episodeUrl = req.query.url;
+
+  if (!episodeUrl) {
+    return res.status(400).json({ error: 'Missing "url" query parameter' });
+  }
+
+  try {
+    const browser = await puppeteer.launch({ headless: 'new' });
+    const page = await browser.newPage();
+
+    await page.goto(episodeUrl, { waitUntil: 'load' });
+
+    // Wait for iframe(s) to load
+    await new Promise(resolve => setTimeout(resolve, 7000));
+
+    const iframeSrc = await page.evaluate(() => {
+      const iframes = document.querySelectorAll('iframe');
+      for (let iframe of iframes) {
+        const style = window.getComputedStyle(iframe);
+        if (style.display !== 'none' && iframe.src) {
+          return iframe.src;
+        }
+      }
+      return null;
+    });
+
+    await browser.close();
+
+    if (iframeSrc) {
+      res.json({ iframeUrl: iframeSrc });
+    } else {
+      res.status(404).json({ error: 'No visible iframe found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to process URL', details: error.message });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
