@@ -1,6 +1,7 @@
 const express = require('express');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const { executablePath } = require('puppeteer');
 puppeteer.use(StealthPlugin());
 
 const app = express();
@@ -136,6 +137,109 @@ app.get('/iframe', async (req, res) => {
     }
   } catch (error) {
     res.status(500).json({ error: 'Failed to process URL', details: error.message });
+  }
+});
+
+app.get('/api/download-links', async (req, res) => {
+  const { url } = req.query;
+
+  if (!url) {
+    return res.status(400).json({ error: 'Missing URL parameter' });
+  }
+
+  try {
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      executablePath: executablePath(),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
+        '--window-size=1920,1080',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process'
+      ],
+      ignoreHTTPSErrors: true,
+      defaultViewport: null
+    });
+
+    const page = await browser.newPage();
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'accept-language': 'en-US,en;q=0.9',
+      'upgrade-insecure-requests': '1',
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"'
+    });
+
+    await page.setViewport({
+      width: 1920 + Math.floor(Math.random() * 100),
+      height: 1080 + Math.floor(Math.random() * 100),
+      deviceScaleFactor: 1,
+      hasTouch: false,
+      isLandscape: false,
+      isMobile: false
+    });
+
+    // Enable request interception (optional)
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const url = request.url();
+      const resourceType = request.resourceType();
+
+      if (
+        ['image', 'font', 'stylesheet', 'media', 'other', 'xhr', 'script'].includes(resourceType) &&
+        !url.includes('9anime')
+      ) {
+        request.abort();
+      } else {
+        request.continue();
+      }
+    });
+
+    console.log(`Navigating to: ${url}`);
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+
+    console.log('Clicking download button...');
+    await page.waitForSelector('#download-btn', { timeout: 30000 });
+    await page.click('#download-btn');
+
+    console.log('Waiting for modal to load...');
+    await page.waitForSelector('#downloadModal.show', { timeout: 30000 });
+    await page.waitForResponse(response => 
+      response.url().includes('admin-ajax.php') && 
+      response.status() === 200
+    );
+
+    console.log('Extracting download links...');
+    const links = await page.evaluate(() => {
+      const result = [];
+      const downloadButtons = document.querySelectorAll('#download-links a.btn.btn-primary');
+      
+      downloadButtons.forEach(button => {
+        const quality = button.textContent.trim();
+        const link = button.href.trim();
+        result.push({ quality, link });
+      });
+
+      return result;
+    });
+
+    await browser.close();
+    res.json({ success: true, links });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
