@@ -357,8 +357,11 @@ app.get('/api/anime-download', async (req, res) => {
         }
 
         // Step 2: Remove /anime/ from the path
-        const cleanedPath = bestMatch.replace(/^\/anime\//, '').replace(/\/$/, '');
-        const modifiedUrl = `${cleanedPath}-episode-${episode}/`;
+        const urlObj = new URL(bestMatch);
+urlObj.pathname = urlObj.pathname.replace('/anime/', '/').replace(/\/$/, '');
+
+const cleanedUrl = `${urlObj.origin}${urlObj.pathname}`;
+const modifiedUrl = `${cleanedUrl}-episode-${episode}/`;
 
         // Step 3: Get download links
         const downloadRes = await axios.get(`https://txtorg-anih.hf.space/api/download-links?url=${encodeURIComponent(modifiedUrl)}`);
