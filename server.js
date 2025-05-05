@@ -243,6 +243,103 @@ app.get('/api/download-links', async (req, res) => {
   }
 });
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+app.get('/api/anime-links', async (req, res) => {
+  const rawQuery = req.query.q || 'Naruto';
+  const query = rawQuery.toLowerCase().trim();
+  const querySlug = query.replace(/\s+/g, '-');
+  const pageUrl = `https://9anime.org.lv/?s=${encodeURIComponent(query)}`;
+
+  try {
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      executablePath: executablePath(),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
+        '--window-size=1920,1080',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process'
+      ],
+      ignoreHTTPSErrors: true,
+      defaultViewport: null
+    });
+
+    const page = await browser.newPage();
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'accept-language': 'en-US,en;q=0.9'
+    });
+
+    await page.setViewport({ width: 1920, height: 1080 });
+
+    console.log(`Navigating to: ${pageUrl}`);
+    await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    await delay(1000); // Wait for content to load
+
+    const links = await page.evaluate(() => {
+      const anchors = Array.from(document.querySelectorAll('a[href^="https://9anime.org.lv/anime/"]'));
+      const seen = new Set();
+      return anchors.map(a => {
+        const href = a.href.split('?')[0];
+        if (!seen.has(href) && /^https:\/\/9anime\.org\.lv\/anime\/[^/]+\/?$/.test(href)) {
+          seen.add(href);
+          return href;
+        }
+      }).filter(Boolean);
+    });
+
+    await browser.close();
+
+    const filtered = links.filter(link => !/\/anime\/.*-movie/.test(link));
+
+    if (!filtered.length) {
+      return res.status(404).json({ success: false, message: 'No valid anime links found' });
+    }
+
+    const scored = filtered.map(link => {
+      const slug = link.split('/anime/')[1].replace(/\/$/, '').toLowerCase();
+      let score = 0;
+      if (slug === querySlug) score = 3;
+      else if (slug.startsWith(querySlug)) score = 2;
+      else if (slug.includes(querySlug)) score = 1;
+      return { link, slug, score };
+    });
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.slug.length - b.slug.length;
+    });
+
+    const bestMatch = scored.find(item => item.score > 0);
+
+    if (!bestMatch) {
+      return res.status(404).json({ success: false, message: 'No suitable match found' });
+    }
+
+    res.json({
+      success: true,
+      bestMatch: bestMatch.link
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
