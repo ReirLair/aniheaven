@@ -357,7 +357,9 @@ app.get('/api/anime-download', async (req, res) => {
         }
 
         // Step 2: Modify URL
-        const modifiedUrl = bestMatch.replace(/\/$/, '') + `-episode-${episode}/`;
+        // Clean up and format the URL
+const cleanedUrl = bestMatch.replace('/anime/', '/').replace(/\/$/, '');
+const modifiedUrl = `${cleanedUrl}-episode-${episode}/`;
 
         // Step 3: Get download links
         const downloadRes = await axios.get(`https://txtorg-anih.hf.space/api/download-links?url=${encodeURIComponent(modifiedUrl)}`);
