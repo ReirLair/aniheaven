@@ -378,6 +378,54 @@ const modifiedUrl = `${cleanedUrl}-episode-${episode}/`;
     }
 });
 
+app.get('/resolve', async (req, res) => {
+  const inputUrl = req.query.url;
+  if (!inputUrl) return res.status(400).json({ error: 'Missing ?url parameter' });
+
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+    let directFileUrl = null;
+
+    page.on('response', async (response) => {
+      const url = response.url();
+
+      if (
+        url.match(/\.(mp4|mkv|mov)(\?|$)/i) ||
+        url.includes('nextcdn') ||
+        url.includes('vault-13.kwik.cx')
+      ) {
+        if (!directFileUrl) {
+          directFileUrl = url;
+          console.log('[FOUND]', directFileUrl);
+        }
+      }
+    });
+
+    await page.goto(inputUrl, {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    await browser.close();
+
+    if (directFileUrl) {
+      res.json({ success: true, resolvedUrl: directFileUrl });
+    } else {
+      res.status(404).json({ error: 'No direct file URL found after redirects' });
+    }
+
+  } catch (err) {
+    if (browser) await browser.close();
+    res.status(500).json({ error: 'Failed to resolve URL', details: err.toString() });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
