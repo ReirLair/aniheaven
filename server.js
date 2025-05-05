@@ -339,6 +339,39 @@ app.get('/api/anime-links', async (req, res) => {
   }
 });
 
+app.get('/api/anime-download', async (req, res) => {
+    const { q, episode } = req.query;
+
+    if (!q || !episode) {
+        return res.status(400).json({ success: false, message: "Missing 'q' (anime name) or 'episode'" });
+    }
+
+    try {
+        // Step 1: Get best match URL
+        const searchRes = await axios.get(`https://txtorg-anih.hf.space/api/anime-links?q=${encodeURIComponent(q)}`);
+        const bestMatch = searchRes.data.bestMatch;
+
+        if (!bestMatch) {
+            return res.status(404).json({ success: false, message: 'Anime not found' });
+        }
+
+        // Step 2: Modify URL
+        const modifiedUrl = bestMatch.replace(/\/$/, '') + `-episode-${episode}/`;
+
+        // Step 3: Get download links
+        const downloadRes = await axios.get(`https://txtorg-anih.hf.space/api/download-links?url=${encodeURIComponent(modifiedUrl)}`);
+
+        return res.json({
+            success: true,
+            anime: q,
+            episode: episode,
+            stream_url: modifiedUrl,
+            download_links: downloadRes.data.links
+        });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
