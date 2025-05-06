@@ -141,6 +141,22 @@ app.get('/iframe', async (req, res) => {
   }
 });
 
+app.get('/q', (req, res) => {
+  const filemoonUrl = req.query.q;
+
+  if (!filemoonUrl || !filemoonUrl.startsWith('https://')) {
+    return res.status(400).json({ error: 'Invalid or missing Filemoon URL.' });
+  }
+
+  // Generate a random 16-character hex path
+  const randomPath = crypto.randomBytes(8).toString('hex');
+
+  urlMap.set(randomPath, filemoonUrl);
+  const fullUrl = `${req.protocol}://${req.get('host')}/${randomPath}`;
+
+  res.json({ url: fullUrl });
+});
+
 app.get('/api/download-links', async (req, res) => {
   const { url } = req.query;
 
