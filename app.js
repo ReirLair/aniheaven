@@ -4,6 +4,8 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { executablePath } = require('puppeteer');
 const axios = require('axios');
 const crypto = require('crypto');
+const cors = require('cors');
+app.use(cors());
 puppeteer.use(StealthPlugin());
 
 const app = express();
