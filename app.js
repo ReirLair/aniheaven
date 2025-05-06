@@ -5,10 +5,11 @@ const { executablePath } = require('puppeteer');
 const axios = require('axios');
 const crypto = require('crypto');
 const cors = require('cors');
-app.use(cors());
+
 puppeteer.use(StealthPlugin());
 
 const app = express();
+app.use(cors());
 const PORT = 7860;
 
 app.get('/video', async (req, res) => {
