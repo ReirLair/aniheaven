@@ -141,18 +141,30 @@ app.get('/iframe', async (req, res) => {
   }
 });
 
-app.get('/q', (req, res) => {
-  const filemoonUrl = req.query.q;
+const urlMap = new Map();
 
-  if (!filemoonUrl || !filemoonUrl.startsWith('https://')) {
-    return res.status(400).json({ error: 'Invalid or missing Filemoon URL.' });
+app.get('/vid/:id', (req, res) => {
+  const originalUrl = urlMap.get(req.params.id);
+
+  if (!originalUrl) {
+    return res.status(404).json({ error: 'URL not found.' });
+  }
+
+  res.redirect(originalUrl);
+});
+
+app.get('/q', (req, res) => {
+  const inputUrl = req.query.q;
+
+  if (!inputUrl) {
+    return res.status(400).json({ error: 'Missing URL.' });
   }
 
   // Generate a random 16-character hex path
   const randomPath = crypto.randomBytes(8).toString('hex');
 
-  urlMap.set(randomPath, filemoonUrl);
-  const fullUrl = `${req.protocol}://${req.get('host')}/${randomPath}`;
+  urlMap.set(randomPath, inputUrl);
+  const fullUrl = `${req.protocol}://${req.get('host')}/vid/${randomPath}`;
 
   res.json({ url: fullUrl });
 });
