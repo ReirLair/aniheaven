@@ -458,6 +458,181 @@ app.get('/resolve', async (req, res) => {
   }
 });
 
+function similarity(s1, s2) {
+  s1 = s1.toLowerCase();
+  s2 = s2.toLowerCase();
+  const longer = s1.length > s2.length ? s1 : s2;
+  const shorter = s1.length > s2.length ? s2 : s1;
+  const longerLength = longer.length;
+  if (longerLength === 0) return 1.0;
+  return (longerLength - editDistance(longer, shorter)) / parseFloat(longerLength);
+}
+
+function editDistance(s1, s2) {
+  const costs = [];
+  for (let i = 0; i <= s1.length; i++) {
+    let lastValue = i;
+    for (let j = 0; j <= s2.length; j++) {
+      if (i === 0) {
+        costs[j] = j;
+      } else if (j > 0) {
+        let newValue = costs[j - 1];
+        if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+          newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+        }
+        costs[j - 1] = lastValue;
+        lastValue = newValue;
+      }
+    }
+    if (i > 0) costs[s2.length] = lastValue;
+  }
+  return costs[s2.length];
+}
+
+// Auto-scroll helper
+async function autoScroll(page) {
+  await page.evaluate(async () => {
+    await new Promise(resolve => {
+      let totalHeight = 0;
+      const distance = 300;
+      const timer = setInterval(() => {
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+        if (totalHeight >= document.body.scrollHeight - window.innerHeight) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 200);
+    });
+  });
+}
+
+// Express API Route
+app.get('/api/episode', async (req, res) => {
+  const animeQuery = req.query.anime;
+  const episodeQuery = parseInt(req.query.ep);
+
+  if (!animeQuery || isNaN(episodeQuery)) {
+    return res.status(400).json({ error: 'anime and ep query parameters are required' });
+  }
+
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+
+  try {
+    await page.goto('https://animepahe.ru/anime', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.tab-content .tab-pane');
+    await autoScroll(page);
+
+    // Get all anime entries
+    const results = await page.evaluate(() => {
+      const allAnime = [];
+      const panes = document.querySelectorAll('.tab-content .tab-pane');
+      panes.forEach(pane => {
+        const items = pane.querySelectorAll('.col-12.col-md-6 a');
+        items.forEach(a => {
+          const title = a.getAttribute('title');
+          const link = a.getAttribute('href');
+          if (title && link) allAnime.push({ title, link });
+        });
+      });
+      return allAnime;
+    });
+
+    // Find best match
+    let bestMatch = null;
+    let bestScore = 0;
+    for (const anime of results) {
+      const score = similarity(animeQuery, anime.title);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = anime;
+      }
+    }
+
+    if (!bestMatch || bestScore < 0.3) {
+      await browser.close();
+      return res.status(404).json({ error: 'No matching anime found.' });
+    }
+
+    const animePageUrl = `https://animepahe.ru${bestMatch.link}`;
+    await page.goto(animePageUrl, { waitUntil: 'domcontentloaded' });
+
+    const animeId = await page.evaluate(() => {
+      const meta = document.querySelector('meta[property="og:url"]');
+      return meta ? meta.content.split('/').pop() : null;
+    });
+
+    if (!animeId) throw new Error('Failed to extract anime ID');
+
+    // Search for episode
+    let found = null;
+    for (let pageNum = 1; pageNum <= 50; pageNum++) {
+      const data = await page.evaluate(async (animeId, pageNum) => {
+        const apiUrl = `https://animepahe.ru/api?m=release&id=${animeId}&page=${pageNum}&sort=episode_asc`;
+        const res = await fetch(apiUrl);
+        if (!res.ok) return null;
+        return await res.json();
+      }, animeId, pageNum);
+
+      if (!data || !data.data) continue;
+
+      const match = data.data.find(ep => ep.episode == episodeQuery || ep.number == episodeQuery);
+      if (match) {
+        found = {
+          episode: match.episode,
+          snapshot: match.snapshot.replace(/\\\//g, '/'),
+          session: match.session
+        };
+        break;
+      }
+    }
+
+    if (!found) {
+      await browser.close();
+      return res.status(404).json({ error: `Episode ${episodeQuery} not found.` });
+    }
+
+    const playUrl = `https://animepahe.ru/play/${animeId}/${found.session}`;
+
+    // Go to play page
+    const playPage = await browser.newPage();
+    await playPage.goto(playUrl, { waitUntil: 'domcontentloaded' });
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Extract and map links by quality
+    const links = await playPage.evaluate(() => {
+      const map = {};
+      const anchors = Array.from(document.querySelectorAll('a[href*="pahe.win"]'));
+      anchors.forEach(a => {
+        const text = a.innerText.trim().toLowerCase();
+        const href = a.href;
+        if (text.includes('360')) map['360p'] = href;
+        else if (text.includes('480')) map['480p'] = href;
+        else if (text.includes('720')) map['720p'] = href;
+        else if (text.includes('1080')) map['1080p'] = href;
+        else map[text] = href;
+      });
+      return map;
+    });
+
+    await playPage.close();
+    await browser.close();
+
+    return res.json({
+      title: bestMatch.title,
+      episode: found.episode,
+      snapshot: found.snapshot,
+      playUrl,
+      paheLinks: links
+    });
+
+  } catch (err) {
+    await browser.close();
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
