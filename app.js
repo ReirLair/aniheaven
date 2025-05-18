@@ -889,7 +889,91 @@ app.get('/gpt', async (req, res) => {
   }
 });
 
+async function sendToDeepseek(message, chatId) {
+  const url = 'https://chatfreeai.com/wp-admin/admin-ajax.php';
+
+  const chatHistory = [
+    { id: '', text: 'Human: Yo' },
+    {
+      id: 2125,
+      text:
+        'AI: Hey! 👋 Thanks for reaching out. As of today (May 18, 2025), **DeepSeek AI** is a totally free, unlimited platform offering AI tools and chatbots to help with tasks like writing, coding, research, and productivity. It’s designed to break cost barriers, making advanced AI accessible to everyone—students, small businesses, or casual users. You can tap into features like real-time assistance, smart automation, and learning support without spending a dime. Need help drafting an essay, debugging code, or organizing your workflow? DeepSeek’s got your back! 😊',
+    },
+  ];
+
+  const params = new URLSearchParams();
+  params.append('_wpnonce', 'd0bfe9bf42');
+  params.append('post_id', '77');
+  params.append('url', 'https://chatfreeai.com/deepseek-ai-unlimited-free');
+  params.append('action', 'wpaicg_chat_shortcode_message');
+  params.append('message', message);
+  params.append('bot_id', '68');
+  params.append('chatbot_identity', 'custom_bot_68');
+  params.append('wpaicg_chat_history', JSON.stringify(chatHistory));
+  params.append('wpaicg_chat_client_id', 'uL7gDcdTME');
+  params.append('chat_id', chatId);
+
+  const response = await axios({
+    method: 'POST',
+    url,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    data: params.toString(),
+    responseType: 'stream',
+  });
+
+  const reader = response.data;
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let fullMessage = '';
+
+  for await (const chunk of reader) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    const lines = buffer.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const json = JSON.parse(line.slice(6));
+          const reasoning = json.choices?.[0]?.delta?.reasoning;
+          if (reasoning) {
+            fullMessage += reasoning;
+          }
+        } catch (e) {
+          // Ignore parsing errors
+        }
+      }
+    }
+
+    buffer = lines[lines.length - 1]; // Keep last line if partial
+  }
+
+  return fullMessage;
+}
+
+app.get('/deepseek', async (req, res) => {
+  const { message, chat_id } = req.query;
+
+  if (!message || !chat_id) {
+    return res.status(400).json({ error: 'Missing message or chat_id' });
+  }
+
+  if (!/^\d{6}$/.test(chat_id)) {
+    return res.status(400).json({ error: 'chat_id must be exactly 6 digits' });
+  }
+
+  try {
+    const reply = await sendToDeepseek(message, chat_id);
+    res.json({ response: reply, creator: 'Reiker' });
+  } catch (error) {
+    console.error('DeepSeek Error:', error.message);
+    res.status(500).json({ error: 'Failed to get DeepSeek response', creator: 'Reiker' });
+  }
+});
+
 
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
+
