@@ -808,74 +808,84 @@ app.get('/deezer', async (req, res) => {
   }
 });
 
-app.get('/gpt', async (req, res) => {
-  const message = req.query.message;
-  const userid = req.query.userid || getRandomUserID();
-
-  if (!message) {
-    return res.status(400).send('Missing "message" query param.');
-  }
-
-  console.log(`[User ${userid}] Message: ${message}`);
-
+async function sendMessage(message, chatId) {
   const url = 'https://chatfreeai.com/wp-admin/admin-ajax.php';
 
-  const formData = new URLSearchParams();
-  formData.append('_wpnonce', 'd0bfe9bf42');
-  formData.append('post_id', '10');
-  formData.append('url', 'https://chatfreeai.com');
-  formData.append('action', 'wpaicg_chat_shortcode_message');
-  formData.append('message', message);
-  formData.append('bot_id', '0');
-  formData.append('chatbot_identity', 'shortcode');
-  formData.append('wpaicg_chat_history', '[]');
-  formData.append('wpaicg_chat_client_id', 'uL7gDcdTME');
-  formData.append('chat_id', userid);  // <-- use userid here as chat_id
+  const params = new URLSearchParams();
+  params.append('_wpnonce', 'd0bfe9bf42');
+  params.append('post_id', '10');
+  params.append('url', 'https://chatfreeai.com');
+  params.append('action', 'wpaicg_chat_shortcode_message');
+  params.append('message', message);
+  params.append('bot_id', '0');
+  params.append('chatbot_identity', 'shortcode');
+  params.append('wpaicg_chat_history', '[]');
+  params.append('wpaicg_chat_client_id', 'uL7gDcdTME');
+  params.append('chat_id', chatId);
 
-  try {
-    const response = await axios.post(url, formData.toString(), {
-      responseType: 'stream',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-    });
+  const response = await axios({
+    method: 'POST',
+    url,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    data: params.toString(),
+    responseType: 'stream',
+  });
 
-    let buffer = '';
-    const decoder = new TextDecoder();
-    let firstChunkLogged = false;
+  const reader = response.data;
+  const decoder = new TextDecoder('utf-8');
 
-    response.data.on('data', (chunk) => {
-      buffer += decoder.decode(chunk, { stream: true });
+  let buffer = '';
+  let fullMessage = '';
 
-      const lines = buffer.split('\n');
-      for (let line of lines) {
-        if (line.startsWith('data: ') && !firstChunkLogged) {
-          try {
-            const json = JSON.parse(line.slice(6));
-            const content = json.choices?.[0]?.delta?.content;
-            if (content) {
-              console.log(`[User ${userid}] First Chunk:`, content);
-              res.send({ userid, message, firstChunk: content });
-              firstChunkLogged = true;
-              response.data.destroy(); // Stop streaming after first chunk
-              break;
-            }
-          } catch (e) {}
+  for await (const chunk of reader) {
+    buffer += decoder.decode(chunk, { stream: true });
+
+    const lines = buffer.split('\n');
+    for (let line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const json = JSON.parse(line.slice(6));
+          const content = json.choices?.[0]?.delta?.content;
+          if (content) {
+            fullMessage += content;
+          }
+        } catch (e) {
+          // Ignore malformed lines
         }
       }
+    }
 
-      buffer = lines[lines.length - 1]; // Keep partial line
+    buffer = lines[lines.length - 1];
+  }
+
+  return fullMessage;
+}
+
+app.get('/gpt', async (req, res) => {
+  const { message, chat_id } = req.query;
+
+  if (!message || !chat_id) {
+    return res.status(400).json({ error: 'Missing message or chat_id' });
+  }
+
+  if (!/^\d{6}$/.test(chat_id)) {
+    return res.status(400).json({ error: 'chat_id must be exactly 6 digits' });
+  }
+
+  try {
+    const reply = await sendMessage(message, chat_id);
+    res.json({
+      response: reply,
+      creator: 'Reiker',
     });
-
-    response.data.on('end', () => {
-      if (!firstChunkLogged) {
-        res.send({ userid, message, firstChunk: null });
-      }
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      error: 'Failed to get response from chat bot',
+      creator: 'Reiker',
     });
-
-  } catch (err) {
-    console.error('Error:', err.message);
-    res.status(500).send('Failed to get response.');
   }
 });
 
