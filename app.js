@@ -757,6 +757,57 @@ app.get('/spotify', async (req, res) => {
   }
 });
 
+app.get('/deezer', async (req, res) => {
+  const query = req.query.q;
+
+  if (!query) {
+    return res.status(400).json({ error: 'Missing ?q=song name in query' });
+  }
+
+  try {
+    // Step 1: Search Deezer
+    const searchRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
+    const data = searchRes.data;
+
+    if (!data.data || data.data.length === 0) {
+      return res.status(404).json({ error: 'No results found' });
+    }
+
+    const track = data.data[0];
+    const trackId = track.id;
+
+    const trackInfo = {
+      title: track.title,
+      artist: track.artist.name,
+      album: track.album.title,
+      deezerLink: track.link,
+      preview: track.preview,
+      thumbnail: track.album.cover_medium
+    };
+
+    // Step 2: Get download links from Deezmate
+    const dlRes = await axios.get(`https://api.deezmate.com/dl/${trackId}`);
+    const dlData = dlRes.data;
+
+    if (!dlData.success) {
+      return res.status(404).json({ error: 'Download links not available' });
+    }
+
+    // Combine and send all info
+    return res.json({
+      ...trackInfo,
+      downloads: {
+        mp3: dlData.links.mp3,
+        flac: dlData.links.flac
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Something went wrong' });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
