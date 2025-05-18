@@ -808,6 +808,78 @@ app.get('/deezer', async (req, res) => {
   }
 });
 
+app.get('/gpt', async (req, res) => {
+  const message = req.query.message;
+  const userid = req.query.userid || getRandomUserID();
+
+  if (!message) {
+    return res.status(400).send('Missing "message" query param.');
+  }
+
+  console.log(`[User ${userid}] Message: ${message}`);
+
+  const url = 'https://chatfreeai.com/wp-admin/admin-ajax.php';
+
+  const formData = new URLSearchParams();
+  formData.append('_wpnonce', 'd0bfe9bf42');
+  formData.append('post_id', '10');
+  formData.append('url', 'https://chatfreeai.com');
+  formData.append('action', 'wpaicg_chat_shortcode_message');
+  formData.append('message', message);
+  formData.append('bot_id', '0');
+  formData.append('chatbot_identity', 'shortcode');
+  formData.append('wpaicg_chat_history', '[]');
+  formData.append('wpaicg_chat_client_id', 'uL7gDcdTME');
+  formData.append('chat_id', userid);  // <-- use userid here as chat_id
+
+  try {
+    const response = await axios.post(url, formData.toString(), {
+      responseType: 'stream',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    let buffer = '';
+    const decoder = new TextDecoder();
+    let firstChunkLogged = false;
+
+    response.data.on('data', (chunk) => {
+      buffer += decoder.decode(chunk, { stream: true });
+
+      const lines = buffer.split('\n');
+      for (let line of lines) {
+        if (line.startsWith('data: ') && !firstChunkLogged) {
+          try {
+            const json = JSON.parse(line.slice(6));
+            const content = json.choices?.[0]?.delta?.content;
+            if (content) {
+              console.log(`[User ${userid}] First Chunk:`, content);
+              res.send({ userid, message, firstChunk: content });
+              firstChunkLogged = true;
+              response.data.destroy(); // Stop streaming after first chunk
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      buffer = lines[lines.length - 1]; // Keep partial line
+    });
+
+    response.data.on('end', () => {
+      if (!firstChunkLogged) {
+        res.send({ userid, message, firstChunk: null });
+      }
+    });
+
+  } catch (err) {
+    console.error('Error:', err.message);
+    res.status(500).send('Failed to get response.');
+  }
+});
+
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
