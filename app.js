@@ -726,6 +726,37 @@ app.get('/pahe', async (req, res) => {
   }
 });
 
+app.get('/spotify', async (req, res) => {
+  const spotifyUrl = req.query.url;
+  if (!spotifyUrl) {
+    return res.status(400).json({ error: 'Missing Spotify URL in query.' });
+  }
+
+  try {
+    // 1. Fetch track metadata
+    const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
+    const { data: meta } = await axios.get(firstApi);
+
+    console.log('Track Metadata:', meta);
+
+    // 2. Construct second API link
+    const secondApi = `https://spotisongdownloader.to/api/rapidmp3.php?q=LmAXxcu5_HQ&url=${encodeURIComponent(meta.url)}&name=${encodeURIComponent(meta.song_name)}&artist=${encodeURIComponent(meta.artist)}&album=${encodeURIComponent(meta.album_name || 'Unknown')}`;
+
+    // 3. Fetch download info
+    const { data: downloadData } = await axios.get(secondApi);
+    console.log('Download Info:', downloadData);
+
+    res.json({
+      meta,
+      download: downloadData
+    });
+
+  } catch (err) {
+    console.error('Error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch data' });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
