@@ -173,6 +173,44 @@ app.get('/q', (req, res) => {
   res.json({ url: fullUrl });
 });
 
+app.get('/ytdl', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'Missing url query parameter' });
+
+  try {
+    const response = await axios.post('https://www.clipto.com/api/youtube', { url }, {
+      headers: {
+        'Accept': 'application/json, text/plain, */*',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const data = response.data;
+
+    const result = {
+      title: data.title,
+      thumbnail: data.thumbnail,
+      mp4: data.medias
+        .filter(m => m.ext === 'mp4')
+        .map(m => ({
+          quality: m.quality || 'unknown',
+          url: m.url
+        })),
+      audio: data.medias
+        .filter(m => m.type === 'audio' && ['m4a', 'opus'].includes(m.ext))
+        .map(m => ({
+          quality: m.quality || 'unknown',
+          url: m.url
+        }))
+    };
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching video info:', error.message);
+    res.status(500).json({ error: 'Failed to fetch video info' });
+  }
+});
+
 app.get('/api/download-links', async (req, res) => {
   const { url } = req.query;
 
