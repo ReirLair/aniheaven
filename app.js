@@ -1068,6 +1068,63 @@ app.get('/deepseek', async (req, res) => {
   }
 });
 
+function extractPlaylistId(url) {
+  // Matches both standard and shortened Spotify URLs
+  const regex = /(?:spotify\.com\/playlist\/|open\.spotify\.com\/playlist\/|spotify:playlist:)([a-zA-Z0-9]+)/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
+}
+
+// Function to fetch playlist data and extract song details
+async function getPlaylistSongs(playlistId) {
+  try {
+    const response = await axios.get(`https://api.trackify.am/playlist/analyse?playlist_id=${playlistId}&include_details=true`);
+    const data = response.data;
+    
+    if (data.status === 'success') {
+      return data.data.tracks.map(track => ({
+        name: track.track.name,
+        url: track.track.external_urls.spotify,
+        artists: track.track.artists.map(artist => artist.name),
+        duration_ms: track.track.duration_ms,
+        album: track.track.album.name,
+        album_image: track.track.album.images[0]?.url // Adding album image URL
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.error('Error fetching playlist:', error.message);
+    return [];
+  }
+}
+
+// API endpoint
+app.get('/list', async (req, res) => {
+  try {
+    const playlistUrl = req.query.url;
+    if (!playlistUrl) {
+      return res.status(400).json({ error: 'Missing playlist URL in query parameters' });
+    }
+
+    const playlistId = extractPlaylistId(playlistUrl);
+    if (!playlistId) {
+      return res.status(400).json({ error: 'Invalid Spotify playlist URL' });
+    }
+
+    const songs = await getPlaylistSongs(playlistId);
+    res.json({
+      playlistId,
+      songCount: songs.length,
+      songs
+    });
+  } catch (error) {
+    console.error('Error processing request:', error.message);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message 
+    });
+  }
+});
 
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
