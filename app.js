@@ -1126,6 +1126,82 @@ app.get('/list', async (req, res) => {
   }
 });
 
+const clientId = 'ae3ec3332d1b4500bbef0f6952ea6805';
+const clientSecret = 'dc03110d119d40bdab1f23461e004c31';
+
+async function getAccessToken() {
+  const authString = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+  try {
+    const response = await axios.post('https://accounts.spotify.com/api/token', 
+      'grant_type=client_credentials', 
+      {
+        headers: {
+          'Authorization': `Basic ${authString}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        }
+      }
+    );
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Failed to get access token:', error.response ? error.response.data : error.message);
+    throw error;
+  }
+}
+
+app.get('/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query) {
+    return res.status(400).json({ error: 'Missing query parameter q' });
+  }
+
+  try {
+    const token = await getAccessToken();
+
+    const response = await axios.get('https://api.spotify.com/v1/search', {
+      params: {
+        q: query,
+        type: 'track',
+        limit: 1,
+        include_external: 'audio'
+      },
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    const track = response.data.tracks.items[0];
+    if (!track) {
+      return res.status(404).json({ error: 'No tracks found' });
+    }
+
+    // Construct the JSON response
+    const result = {
+      title: track.name,
+      id: track.id,
+      artists: track.artists.map(a => a.name),
+      album: track.album.name,
+      duration_seconds: Math.floor(track.duration_ms / 1000),
+      popularity: track.popularity,
+      release_date: track.album.release_date,
+      spotify_url: track.external_urls.spotify,
+      preview_available: Boolean(track.preview_url),
+      explicit: track.explicit,
+      album_type: track.album.album_type,
+      total_tracks_in_album: track.album.total_tracks,
+      track_number: track.track_number,
+      isrc: track.external_ids.isrc,
+      available_markets_count: track.available_markets.length
+    };
+
+    res.json(result);
+
+  } catch (error) {
+    console.error('Error fetching track:', error.response ? error.response.data : error.message);
+    res.status(500).json({ error: 'Failed to fetch track' });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
