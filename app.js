@@ -738,18 +738,36 @@ app.get('/spotify', async (req, res) => {
   }
 
   try {
-    // 1. Fetch track metadata
+    // Step 1: Get metadata from Spotify link
     const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
     const { data: meta } = await axios.get(firstApi);
 
-    console.log('Track Metadata:', meta);
+    console.log('Metadata:', meta);
 
-    // 2. Construct second API link
-    const secondApi = `https://spotisongdownloader.to/api/rapidmp3.php?q=LmAXxcu5_HQ&url=${encodeURIComponent(meta.url)}&name=${encodeURIComponent(meta.song_name)}&artist=${encodeURIComponent(meta.artist)}&album=${encodeURIComponent(meta.album_name || 'Unknown')}`;
+    if (!meta.song_name || !meta.artist || !meta.url) {
+      return res.status(500).json({ error: 'Invalid metadata received' });
+    }
 
-    // 3. Fetch download info
-    const { data: downloadData } = await axios.get(secondApi);
-    console.log('Download Info:', downloadData);
+    // Step 2: Use new API to get download link
+    const postData = qs.stringify({
+      song_name: meta.song_name,
+      artist_name: meta.artist,
+      url: meta.url
+    });
+
+    const { data: downloadData } = await axios.post(
+      'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
+      postData,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'Accept': 'application/json, text/javascript, */*; q=0.01',
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      }
+    );
+
+    console.log('Download Response:', downloadData);
 
     res.json({
       meta,
