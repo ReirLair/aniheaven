@@ -739,9 +739,16 @@ app.get('/spotify', async (req, res) => {
   }
 
   try {
-    // Step 1: Fetch track metadata
+    // Step 1: Fetch track metadata with better headers
     const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
-    const { data: meta } = await axios.get(firstApi);
+    const { data: meta } = await axios.get(firstApi, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': 'https://spotisongdownloader.to/',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
 
     console.log('Metadata:', meta);
 
@@ -756,7 +763,7 @@ app.get('/spotify', async (req, res) => {
       url: meta.url
     });
 
-    // Step 3: Send POST request with fake headers
+    // Step 3: Send POST request with enhanced headers
     const { data: downloadData } = await axios.post(
       'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
       postData,
@@ -768,24 +775,45 @@ app.get('/spotify', async (req, res) => {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
           'Origin': 'https://spotisongdownloader.to',
           'Referer': 'https://spotisongdownloader.to/',
-        }
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Host': 'spotisongdownloader.to',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin'
+        },
+        // Add a delay to mimic human behavior
+        timeout: 5000
       }
     );
 
     console.log('Download Data:', downloadData);
 
-    if (!downloadData || downloadData.status !== 'success') {
-      return res.status(403).json({ error: '403 Forbidden or no download link' });
+    if (!downloadData || (downloadData.status && downloadData.status !== 'success')) {
+      return res.status(403).json({ 
+        error: '403 Forbidden or no download link',
+        details: downloadData?.message || 'No error message provided'
+      });
     }
 
     res.json({
       meta,
-      download: downloadData.dlink
+      download: downloadData.dlink || downloadData.url
     });
 
   } catch (err) {
     console.error('Error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch data' });
+    
+    // Provide more detailed error information
+    const errorResponse = {
+      error: 'Failed to fetch data',
+      details: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    };
+    
+    res.status(500).json(errorResponse);
   }
 });
 
