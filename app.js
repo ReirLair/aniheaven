@@ -3,6 +3,7 @@ const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const { executablePath } = require('puppeteer');
 const axios = require('axios');
+const qs = require('qs');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
