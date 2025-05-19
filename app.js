@@ -739,7 +739,7 @@ app.get('/spotify', async (req, res) => {
   }
 
   try {
-    // Step 1: Get metadata from Spotify link
+    // Step 1: Fetch track metadata
     const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
     const { data: meta } = await axios.get(firstApi);
 
@@ -749,13 +749,14 @@ app.get('/spotify', async (req, res) => {
       return res.status(500).json({ error: 'Invalid metadata received' });
     }
 
-    // Step 2: Use new API to get download link
+    // Step 2: Prepare POST data
     const postData = qs.stringify({
       song_name: meta.song_name,
       artist_name: meta.artist,
       url: meta.url
     });
 
+    // Step 3: Send POST request with fake headers
     const { data: downloadData } = await axios.post(
       'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
       postData,
@@ -763,20 +764,27 @@ app.get('/spotify', async (req, res) => {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
           'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest'
+          'X-Requested-With': 'XMLHttpRequest',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Origin': 'https://spotisongdownloader.to',
+          'Referer': 'https://spotisongdownloader.to/',
         }
       }
     );
 
-    console.log('Download Response:', downloadData);
+    console.log('Download Data:', downloadData);
+
+    if (!downloadData || downloadData.status !== 'success') {
+      return res.status(403).json({ error: '403 Forbidden or no download link' });
+    }
 
     res.json({
       meta,
-      download: downloadData
+      download: downloadData.dlink
     });
 
   } catch (err) {
-    console.error('Error:', err.message);
+    console.error('Error:', err.response?.data || err.message);
     res.status(500).json({ error: 'Failed to fetch data' });
   }
 });
