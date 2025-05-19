@@ -11,7 +11,10 @@ puppeteer.use(StealthPlugin());
 const app = express();
 app.use(cors());
 const PORT = 7860;
-
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 app.get('/video', async (req, res) => {
     const searchQuery = req.query.name;
     const episodeParam = parseInt(req.query.episode);
