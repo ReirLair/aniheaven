@@ -742,7 +742,7 @@ const userAgents = [
 
 const getRandomUserAgent = () => userAgents[Math.floor(Math.random() * userAgents.length)];
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const delayx = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const getRandomDelay = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
@@ -796,7 +796,7 @@ app.get('/spotify', async (req, res) => {
     });
 
     // Step 1: Fetch track metadata with delay
-    await delay(getRandomDelay(800, 2000));
+    await delayx(getRandomDelay(800, 2000));
     
     const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
     const { data: meta } = await axios.get(firstApi, {
@@ -825,7 +825,7 @@ app.get('/spotify', async (req, res) => {
     }
 
     // Step 2: Prepare POST data with delay
-    await delay(getRandomDelay(1000, 2500));
+    await delayx(getRandomDelay(1000, 2500));
     
     const postData = qs.stringify({
       song_name: meta.song_name,
@@ -874,7 +874,7 @@ app.get('/spotify', async (req, res) => {
     }
 
     // Optional completion log with delay
-    await delay(getRandomDelay(500, 1500));
+    await delayx(getRandomDelay(500, 1500));
     await axios.get(`https://spotisongdownloader.to/log.php?t=${Date.now()}&status=finished with m4a&error=Spotify`, {
       headers: baseHeaders
     }).catch(() => null); // Ignore errors in logging
