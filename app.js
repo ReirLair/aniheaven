@@ -732,6 +732,20 @@ app.get('/pahe', async (req, res) => {
   }
 });
 
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36'
+];
+
+const getRandomUserAgent = () => userAgents[Math.floor(Math.random() * userAgents.length)];
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const getRandomDelay = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
 app.get('/spotify', async (req, res) => {
   const spotifyUrl = req.query.url;
   if (!spotifyUrl) {
@@ -739,13 +753,30 @@ app.get('/spotify', async (req, res) => {
   }
 
   try {
-    // Generate a random fingerprint and session ID
+    // Generate unique session identifiers
     const fingerprint = Math.floor(Math.random() * 2000000000) - 1000000000;
     const sessionId = crypto.randomBytes(16).toString('hex');
-    const days = Math.random();
+    const days = Math.random().toFixed(6);
+    const userAgent = getRandomUserAgent();
 
-    // Step 0: Verify fingerprint (critical step that was missing)
-    await axios.post(
+    // Common headers configuration
+    const baseHeaders = {
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest',
+      'User-Agent': userAgent,
+      'Origin': 'https://spotisongdownloader.to',
+      'Referer': 'https://spotisongdownloader.to/',
+      'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`,
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin'
+    };
+
+    // Step 0: Verify fingerprint with random delay
+    await delay(getRandomDelay(500, 1500));
+    
+    const verifyResponse = await axios.post(
       'https://spotisongdownloader.to/users/fingerprints.php',
       qs.stringify({
         action: 'verify',
@@ -754,85 +785,99 @@ app.get('/spotify', async (req, res) => {
       }),
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-          'Origin': 'https://spotisongdownloader.to',
-          'Referer': 'https://spotisongdownloader.to/',
-          'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`
-        }
+          ...baseHeaders,
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        },
+        timeout: 10000
       }
-    );
-
-    // Step 1: Fetch track metadata
-    const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
-    const { data: meta } = await axios.get(firstApi, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Referer': 'https://spotisongdownloader.to/',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`
-      }
+    ).catch(err => {
+      console.error('Fingerprint verification failed:', err.message);
+      // Continue anyway as this might not be critical
     });
 
-    console.log('Metadata:', meta);
+    // Step 1: Fetch track metadata with delay
+    await delay(getRandomDelay(800, 2000));
+    
+    const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
+    const { data: meta } = await axios.get(firstApi, {
+      headers: baseHeaders,
+      timeout: 15000
+    });
 
-    if (!meta.song_name || !meta.artist || !meta.url) {
-      return res.status(500).json({ error: 'Invalid metadata received' });
+    if (!meta?.song_name || !meta?.artist || !meta?.url) {
+      // Retry once with new session if metadata is invalid
+      await delay(getRandomDelay(1000, 3000));
+      const retryMeta = await axios.get(firstApi, {
+        headers: {
+          ...baseHeaders,
+          'User-Agent': getRandomUserAgent() // Rotate UA on retry
+        },
+        timeout: 15000
+      }).catch(() => null);
+      
+      if (!retryMeta?.data?.song_name) {
+        return res.status(500).json({ 
+          error: 'Invalid metadata received',
+          details: meta
+        });
+      }
+      meta = retryMeta.data;
     }
 
-    // Step 2: Prepare POST data
+    // Step 2: Prepare POST data with delay
+    await delay(getRandomDelay(1000, 2500));
+    
     const postData = qs.stringify({
       song_name: meta.song_name,
       artist_name: meta.artist,
       url: meta.url
     });
 
-    // Step 3: Send POST request with all required headers and cookies
+    // Step 3: Send POST request with all required headers
     const { data: downloadData } = await axios.post(
       'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
       postData,
       {
         headers: {
+          ...baseHeaders,
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-          'Origin': 'https://spotisongdownloader.to',
-          'Referer': 'https://spotisongdownloader.to/',
-          'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`,
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin'
+          'Accept-Encoding': 'gzip, deflate, br'
         },
-        // Add a delay to mimic human behavior
-        timeout: 10000
+        timeout: 20000
       }
-    );
-
-    console.log('Download Data:', downloadData);
-
-    // Step 4: Send completion log (optional but might help)
-    await axios.get(`https://spotisongdownloader.to/log.php?t=${Date.now()}&status=finished with m4a&error=Spotify`, {
-      headers: {
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`,
-        'Referer': 'https://spotisongdownloader.to/'
+    ).catch(async err => {
+      // If we get 403, wait longer and retry once
+      if (err.response?.status === 403) {
+        await delay(getRandomDelay(3000, 5000));
+        return axios.post(
+          'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
+          postData,
+          {
+            headers: {
+              ...baseHeaders,
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'User-Agent': getRandomUserAgent() // Rotate UA on retry
+            },
+            timeout: 20000
+          }
+        );
       }
+      throw err;
     });
 
-    if (!downloadData || !downloadData.dlink) {
+    if (!downloadData?.dlink) {
       return res.status(403).json({ 
         error: '403 Forbidden or no download link',
-        details: downloadData?.message || 'No error message provided'
+        details: downloadData?.message || 'No error message provided',
+        response: downloadData
       });
     }
+
+    // Optional completion log with delay
+    await delay(getRandomDelay(500, 1500));
+    await axios.get(`https://spotisongdownloader.to/log.php?t=${Date.now()}&status=finished with m4a&error=Spotify`, {
+      headers: baseHeaders
+    }).catch(() => null); // Ignore errors in logging
 
     res.json({
       meta,
@@ -846,13 +891,13 @@ app.get('/spotify', async (req, res) => {
       error: 'Failed to fetch data',
       details: err.message,
       status: err.response?.status,
-      data: err.response?.data
+      data: err.response?.data,
+      suggestion: 'Try again in a few seconds'
     };
     
     res.status(500).json(errorResponse);
   }
 });
-
 app.get('/deezer', async (req, res) => {
   const query = req.query.q;
 
