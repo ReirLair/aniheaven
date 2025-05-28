@@ -644,20 +644,53 @@ app.get('/api/episode', async (req, res) => {
     await playPage.goto(playUrl, { waitUntil: 'domcontentloaded' });
     await new Promise(r => setTimeout(r, 5000));
 
-    // Extract and map links by quality
+    // Extract and organize links by quality and audio type
     const links = await playPage.evaluate(() => {
-      const map = {};
-      const anchors = Array.from(document.querySelectorAll('a[href*="pahe.win"]'));
-      anchors.forEach(a => {
+      const result = {
+        sub: {},
+        dub: {}
+      };
+      
+      // Extract streaming links (kwik.si)
+      const streamButtons = document.querySelectorAll('#resolutionMenu button[data-src]');
+      streamButtons.forEach(button => {
+        const quality = button.getAttribute('data-resolution') + 'p';
+        const audio = button.getAttribute('data-audio');
+        const url = button.getAttribute('data-src');
+        
+        if (audio === 'jpn') {
+          result.sub[quality] = url;
+        } else if (audio === 'eng') {
+          result.dub[quality] = url;
+        }
+      });
+      
+      // Extract download links (pahe.win)
+      const downloadLinks = document.querySelectorAll('#pickDownload a[href*="pahe.win"]');
+      downloadLinks.forEach(a => {
         const text = a.innerText.trim().toLowerCase();
         const href = a.href;
-        if (text.includes('360')) map['360p'] = href;
-        else if (text.includes('480')) map['480p'] = href;
-        else if (text.includes('720')) map['720p'] = href;
-        else if (text.includes('1080')) map['1080p'] = href;
-        else map[text] = href;
+        const isDub = text.includes('eng');
+        
+        if (text.includes('360')) {
+          if (isDub) result.dub['360p_download'] = href;
+          else result.sub['360p_download'] = href;
+        } 
+        else if (text.includes('480')) {
+          if (isDub) result.dub['480p_download'] = href;
+          else result.sub['480p_download'] = href;
+        }
+        else if (text.includes('720')) {
+          if (isDub) result.dub['720p_download'] = href;
+          else result.sub['720p_download'] = href;
+        }
+        else if (text.includes('1080')) {
+          if (isDub) result.dub['1080p_download'] = href;
+          else result.sub['1080p_download'] = href;
+        }
       });
-      return map;
+      
+      return result;
     });
 
     await playPage.close();
@@ -668,7 +701,7 @@ app.get('/api/episode', async (req, res) => {
       episode: found.episode,
       snapshot: found.snapshot,
       playUrl,
-      paheLinks: links
+      links // Now organized by sub/dub
     });
 
   } catch (err) {
