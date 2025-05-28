@@ -1182,6 +1182,7 @@ async function getAccessToken() {
   }
 }
 
+
 app.get('/search', async (req, res) => {
   const query = req.query.q;
   if (!query) {
@@ -1232,6 +1233,114 @@ app.get('/search', async (req, res) => {
   } catch (error) {
     console.error('Error fetching track:', error.response ? error.response.data : error.message);
     res.status(500).json({ error: 'Failed to fetch track' });
+  }
+});
+
+app.get('/resolvex', async (req, res) => {
+  const startUrl = req.query.url;
+  const targetDomain = 'hindianimedubs.com';
+
+  if (!startUrl) {
+    return res.status(400).json({ error: 'Missing URL parameter ?url=' });
+  }
+
+  let finalUrl = null;
+  let kwikLink = null;
+  let directFileUrl = null;
+
+  let browser;
+
+  try {
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+
+    // Step 1: Wait for redirect to hindianimedubs.com page that has a download link
+    const waitForValidRedirect = new Promise((resolve) => {
+      page.on('response', async (response) => {
+        const url = response.url();
+
+        if (!url.includes(targetDomain) || url.endsWith('.png')) return;
+
+        try {
+          const tempPage = await browser.newPage();
+          await tempPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 0 });
+
+          const hasDownload = await tempPage.$('#getLinkContainer a');
+          if (hasDownload) {
+            finalUrl = url;
+            resolve();
+          }
+
+          await tempPage.close();
+        } catch {}
+      });
+    });
+
+    console.log('[*] Navigating to:', startUrl);
+    await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 0 });
+
+    console.log('[*] Waiting for valid redirect to download page...');
+    await waitForValidRedirect;
+
+    if (!finalUrl) {
+      await browser.close();
+      return res.status(404).json({ error: 'No valid download page found.' });
+    }
+
+    console.log('[*] Found download page:', finalUrl);
+    await page.goto(finalUrl, { waitUntil: 'networkidle2', timeout: 0 });
+
+    // Step 2: Get Kwik link
+    await page.waitForSelector('#getLinkContainer a', { timeout: 15000 });
+    kwikLink = await page.$eval('#getLinkContainer a', el => el.href);
+    console.log('[*] Kwik Link:', kwikLink);
+
+    // Step 3: Go to Kwik link and capture direct file URL
+    const downloadPage = await browser.newPage();
+
+    const waitForDirectFile = new Promise((resolve) => {
+      downloadPage.on('response', async (response) => {
+        const url = response.url();
+
+        if (
+          url.match(/\.(mp4|mkv|mov)(\?|$)/i) ||
+          url.includes('nextcdn') ||
+          url.includes('vault-13.kwik.cx')
+        ) {
+          if (!directFileUrl) {
+            directFileUrl = url;
+            console.log('[✓] Direct video URL found:', directFileUrl);
+            resolve();
+          }
+        }
+      });
+    });
+
+    console.log('[*] Navigating to Kwik link...');
+    await downloadPage.goto(kwikLink, { waitUntil: 'networkidle2', timeout: 30000 });
+
+    // Wait for direct link or timeout after 15 seconds
+    await Promise.race([
+      waitForDirectFile,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout waiting for video URL')), 15000))
+    ]);
+
+    await browser.close();
+
+    if (!directFileUrl) {
+      return res.status(504).json({ error: 'Direct video URL not found in time.' });
+    }
+
+    return res.json({ finalUrl, kwikLink, directFileUrl });
+
+  } catch (err) {
+    console.error('[-] Error:', err.message);
+    if (browser) await browser.close();
+    return res.status(500).json({ error: err.message });
   }
 });
 
