@@ -637,6 +637,32 @@ app.get('/api/episode', async (req, res) => {
       return res.status(404).json({ error: `Episode ${episodeQuery} not found.` });
     }
 
+    // Upload snapshot to Catbox
+    let catboxUrl = found.snapshot; // Fallback to original snapshot URL
+    try {
+      const imageResponse = await axios.get(found.snapshot, { responseType: 'arraybuffer' });
+      const form = new FormData();
+      form.append('reqtype', 'fileupload');
+      form.append('fileToUpload', Buffer.from(imageResponse.data), {
+        filename: 'snapshot.jpg',
+        contentType: 'image/jpeg'
+      });
+
+      const uploadResponse = await axios.post('https://catbox.moe/user/api.php', form, {
+        headers: {
+          ...form.getHeaders()
+        }
+      });
+
+      if (uploadResponse.data.startsWith('https://files.catbox.moe/')) {
+        catboxUrl = uploadResponse.data;
+      } else {
+        console.error('Catbox upload failed:', uploadResponse.data);
+      }
+    } catch (uploadError) {
+      console.error('Error uploading to Catbox:', uploadError.message);
+    }
+
     const playUrl = `https://animepahe.ru/play/${animeId}/${found.session}`;
 
     // Go to play page
@@ -699,9 +725,9 @@ app.get('/api/episode', async (req, res) => {
     return res.json({
       title: bestMatch.title,
       episode: found.episode,
-      snapshot: found.snapshot,
+      snapshot: catboxUrl, // Use Catbox URL instead of raw snapshot
       playUrl,
-      links // Now organized by sub/dub
+      links
     });
 
   } catch (err) {
@@ -709,6 +735,25 @@ app.get('/api/episode', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Assuming autoScroll function is defined elsewhere
+async function autoScroll(page) {
+  await page.evaluate(async () => {
+    await new Promise((resolve) => {
+      let totalHeight = 0;
+      const distance = 100;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+        if (totalHeight >= scrollHeight) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 100);
+    });
+  });
+}
 
 app.get('/pahe', async (req, res) => {
   const inputUrl = req.query.url;
