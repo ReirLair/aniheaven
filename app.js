@@ -1236,111 +1236,88 @@ app.get('/search', async (req, res) => {
   }
 });
 
-app.get('/resolvex', async (req, res) => {
-  const startUrl = req.query.url;
-  const targetDomain = 'hindianimedubs.com';
+const delayg = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  if (!startUrl) {
-    return res.status(400).json({ error: 'Missing URL parameter ?url=' });
+app.get('/scrape', async (req, res) => {
+  const paheURL = req.query.url;
+  if (!paheURL || !paheURL.startsWith('https://pahe.win/')) {
+    return res.status(400).json({ error: 'Invalid or missing pahe.win URL' });
   }
 
-  let finalUrl = null;
-  let kwikLink = null;
-  let directFileUrl = null;
+  const maxRetries = 3;
+  let currentAttempt = 1;
+  let mp4UrlFound = false;
+  let mp4Url = null;
 
-  let browser;
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+
+  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36');
 
   try {
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    // Step 1: Navigate to pahe.win and extract kwik.si link
+    await page.goto(paheURL, { waitUntil: 'networkidle2' });
 
-    const page = await browser.newPage();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('a.redirect');
+      return el && el.href && el.href.startsWith('https://kwik.si/');
+    }, { timeout: 10000 });
 
-    // Step 1: Wait for redirect to hindianimedubs.com page that has a download link
-    const waitForValidRedirect = new Promise((resolve) => {
-      page.on('response', async (response) => {
-        const url = response.url();
+    const kwikLink = await page.$eval('a.redirect', el => el.href);
 
-        if (!url.includes(targetDomain) || url.endsWith('.png')) return;
-
-        try {
-          const tempPage = await browser.newPage();
-          await tempPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 0 });
-
-          const hasDownload = await tempPage.$('#getLinkContainer a');
-          if (hasDownload) {
-            finalUrl = url;
-            resolve();
-          }
-
-          await tempPage.close();
-        } catch {}
-      });
-    });
-
-    console.log('[*] Navigating to:', startUrl);
-    await page.goto(startUrl, { waitUntil: 'networkidle2', timeout: 0 });
-
-    console.log('[*] Waiting for valid redirect to download page...');
-    await waitForValidRedirect;
-
-    if (!finalUrl) {
-      await browser.close();
-      return res.status(404).json({ error: 'No valid download page found.' });
+    // Extract ID from kwik.si URL
+    const kwikId = kwikLink.split('/f/')[1];
+    if (!kwikId) {
+      throw new Error('Could not extract ID from kwik.si URL');
     }
 
-    console.log('[*] Found download page:', finalUrl);
-    await page.goto(finalUrl, { waitUntil: 'networkidle2', timeout: 0 });
+    // Construct kwik.bunniescdn.online URL
+    const kwikBunnyURL = `https://kwik.bunniescdn.online/f/${kwikId}`;
 
-    // Step 2: Get Kwik link
-    await page.waitForSelector('#getLinkContainer a', { timeout: 15000 });
-    kwikLink = await page.$eval('#getLinkContainer a', el => el.href);
-    console.log('[*] Kwik Link:', kwikLink);
-
-    // Step 3: Go to Kwik link and capture direct file URL
-    const downloadPage = await browser.newPage();
-
-    const waitForDirectFile = new Promise((resolve) => {
-      downloadPage.on('response', async (response) => {
-        const url = response.url();
-
-        if (
-          url.match(/\.(mp4|mkv|mov)(\?|$)/i) ||
-          url.includes('nextcdn') ||
-          url.includes('vault-13.kwik.cx')
-        ) {
-          if (!directFileUrl) {
-            directFileUrl = url;
-            console.log('[✓] Direct video URL found:', directFileUrl);
-            resolve();
-          }
-        }
-      });
+    // Step 2: Navigate to kwik.bunniescdn.online URL
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      const url = request.url();
+      if (url.includes('.mp4') && (url.includes('eu') || url.includes('vault') || url.includes('cdn'))) {
+        mp4UrlFound = true;
+        mp4Url = url;
+      }
+      request.continue();
     });
 
-    console.log('[*] Navigating to Kwik link...');
-    await downloadPage.goto(kwikLink, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(kwikBunnyURL, { waitUntil: 'domcontentloaded' });
 
-    // Wait for direct link or timeout after 15 seconds
-    await Promise.race([
-      waitForDirectFile,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout waiting for video URL')), 15000))
-    ]);
+    await delayg(5000); // Wait for scripts and redirects
+
+    const buttonSelector = 'button.button.is-uppercase.is-success.is-fullwidth[type="submit"]';
+
+    // Step 3: Retry clicking the button until MP4 URL is found or max retries reached
+    let buttonClicked = false;
+    while (currentAttempt <= maxRetries && !buttonClicked && !mp4UrlFound) {
+      try {
+        await page.waitForSelector(buttonSelector, { timeout: 20000 });
+        await page.click(buttonSelector);
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+        buttonClicked = true;
+      } catch (err) {
+        currentAttempt++;
+        if (currentAttempt <= maxRetries && !mp4UrlFound) {
+          await delay(3000);
+        }
+      }
+    }
+
+    // Prepare response
+    const response = { kwikLink };
+    if (mp4UrlFound) {
+      response.mp4Link = mp4Url;
+    }
 
     await browser.close();
-
-    if (!directFileUrl) {
-      return res.status(504).json({ error: 'Direct video URL not found in time.' });
-    }
-
-    return res.json({ finalUrl, kwikLink, directFileUrl });
-
+    return res.status(200).json(response);
   } catch (err) {
-    console.error('[-] Error:', err.message);
-    if (browser) await browser.close();
-    return res.status(500).json({ error: err.message });
+    await browser.close();
+    return res.status(500).json({ kwikLink: kwikLink || null, error: err.message });
   }
 });
 
