@@ -1238,7 +1238,7 @@ app.get('/search', async (req, res) => {
 
 const delayg = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-app.get('/scrape', async (req, res) => {
+app.get('/resolvex', async (req, res) => {
   const paheURL = req.query.url;
   if (!paheURL || !paheURL.startsWith('https://pahe.win/')) {
     return res.status(400).json({ error: 'Invalid or missing pahe.win URL' });
