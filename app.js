@@ -1367,6 +1367,34 @@ app.get('/resolvex', async (req, res) => {
   }
 });
 
+app.get('/embed', async (req, res) => {
+    const url = req.query.url;
+    if (!url) return res.status(400).send("Missing 'url' query param");
+
+    try {
+        const axiosResponse = await axios.get(url, {
+            responseType: 'stream',
+            headers: {
+                'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+                ...(req.headers.range ? { Range: req.headers.range } : {}),
+            },
+            validateStatus: () => true // Let non-200 (e.g. 206) pass
+        });
+
+        // Set the headers from the source
+        res.status(axiosResponse.status);
+        for (const [key, value] of Object.entries(axiosResponse.headers)) {
+            res.setHeader(key, value);
+        }
+
+        // Pipe the stream
+        axiosResponse.data.pipe(res);
+    } catch (error) {
+        console.error('Proxy error:', error.message);
+        res.status(500).send('Proxy error: ' + error.message);
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
