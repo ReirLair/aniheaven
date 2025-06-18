@@ -817,13 +817,73 @@ app.get('/spotify', async (req, res) => {
     return res.status(400).json({ error: 'Missing Spotify URL in query.' });
   }
 
+  let browser;
   try {
-    // Generate a random fingerprint and session ID
+    // Launch browser with stealth mode
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
+    });
+
+    const page = await browser.newPage();
+
+    // Set realistic browser headers
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1'
+    });
+
+    // Generate session credentials
     const fingerprint = Math.floor(Math.random() * 2000000000) - 1000000000;
     const sessionId = crypto.randomBytes(16).toString('hex');
-    const days = Math.random();
+    const days = Math.random() * 0.7;
 
-    // Step 0: Verify fingerprint (critical step that was missing)
+    // Common headers for axios requests
+    const commonHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Origin': 'https://spotisongdownloader.to',
+      'Referer': 'https://spotisongdownloader.to/',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}; __cf_bm=${crypto.randomBytes(22).toString('base64').slice(0, 22)}`
+    };
+
+    // Navigate to site to get Cloudflare clearance
+    await page.goto('https://spotisongdownloader.to/', {
+      waitUntil: 'networkidle0',
+      timeout: 30000
+    });
+
+    // Get cookies from browser
+    const browserCookies = await page.cookies();
+    const cookieString = browserCookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+
+    // Update headers with browser cookies
+    commonHeaders.Cookie = cookieString;
+
+    // Step 1: Verify fingerprint
     await axios.post(
       'https://spotisongdownloader.to/users/fingerprints.php',
       qs.stringify({
@@ -833,153 +893,87 @@ app.get('/spotify', async (req, res) => {
       }),
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-          'Origin': 'https://spotisongdownloader.to',
-          'Referer': 'https://spotisongdownloader.to/',
-          'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`
-        }
+          ...commonHeaders,
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        },
+        timeout: 15000
       }
     );
 
-    // Step 1: Fetch track metadata
-    const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
-    const { data: meta } = await axios.get(firstApi, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Referer': 'https://spotisongdownloader.to/',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`
-      }
+    // Step 2: Check captcha status
+    const captchaCheck = await axios.get('https://spotisongdownloader.to/ifCaptcha.php', {
+      headers: commonHeaders,
+      timeout: 5000
     });
 
-    console.log('Metadata:', meta);
-
-    if (!meta.song_name || !meta.artist || !meta.url) {
-      return res.status(500).json({ error: 'Invalid metadata received' });
+    if (captchaCheck.data === true) {
+      return res.status(403).json({ error: 'Captcha required', details: 'Please handle captcha verification' });
     }
 
-    // Step 2: Prepare POST data
+    // Step 3: Fetch track metadata
+    const firstApi = `https://spotisongdownloader.to/api/composer/spotify/xsingle_track.php?url=${encodeURIComponent(spotifyUrl)}`;
+    const { data: meta } = await axios.get(firstApi, {
+      headers: commonHeaders,
+      timeout: 10000
+    });
+
+    if (!meta.song_name || !meta.artist || !meta.url) {
+      return res.status(400).json({ error: 'Invalid metadata received', details: meta });
+    }
+
+    // Step 4: Request download link
     const postData = qs.stringify({
       song_name: meta.song_name,
       artist_name: meta.artist,
       url: meta.url
     });
 
-    // Step 3: Send POST request with all required headers and cookies
     const { data: downloadData } = await axios.post(
       'https://spotisongdownloader.to/api/composer/spotify/ssdw23456ytrfds.php',
       postData,
       {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'Accept': 'application/json, text/javascript, */*; q=0.01',
-          'X-Requested-With': 'XMLHttpRequest',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-          'Origin': 'https://spotisongdownloader.to',
-          'Referer': 'https://spotisongdownloader.to/',
-          'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`,
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin'
+          ...commonHeaders,
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
         },
-        // Add a delay to mimic human behavior
-        timeout: 10000
+        timeout: 15000
       }
     );
 
-    console.log('Download Data:', downloadData);
-
-    // Step 4: Send completion log (optional but might help)
+    // Step 5: Log completion
     await axios.get(`https://spotisongdownloader.to/log.php?t=${Date.now()}&status=finished with m4a&error=Spotify`, {
-      headers: {
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Cookie': `PHPSESSID=${sessionId}; fp=${fingerprint}`,
-        'Referer': 'https://spotisongdownloader.to/'
-      }
+      headers: commonHeaders,
+      timeout: 5000
     });
 
-    if (!downloadData || !downloadData.dlink) {
+    if (!downloadData?.dlink) {
       return res.status(403).json({ 
-        error: '403 Forbidden or no download link',
+        error: 'No download link received',
         details: downloadData?.message || 'No error message provided'
       });
     }
 
-    res.json({
+    return res.json({
       meta,
       download: downloadData.dlink
     });
 
   } catch (err) {
-    console.error('Error:', err.response?.data || err.message);
-    
-    const errorResponse = {
-      error: 'Failed to fetch data',
-      details: err.message,
-      status: err.response?.status,
+    console.error('Error:', {
+      message: err.message,
+      status: err.response?.status || err.status,
       data: err.response?.data
-    };
-    
-    res.status(500).json(errorResponse);
-  }
-});
-
-app.get('/deezer', async (req, res) => {
-  const query = req.query.q;
-
-  if (!query) {
-    return res.status(400).json({ error: 'Missing ?q=song name in query' });
-  }
-
-  try {
-    // Step 1: Search Deezer
-    const searchRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
-    const data = searchRes.data;
-
-    if (!data.data || data.data.length === 0) {
-      return res.status(404).json({ error: 'No results found' });
-    }
-
-    const track = data.data[0];
-    const trackId = track.id;
-
-    const trackInfo = {
-      title: track.title,
-      artist: track.artist.name,
-      album: track.album.title,
-      deezerLink: track.link,
-      preview: track.preview,
-      thumbnail: track.album.cover_medium
-    };
-
-    // Step 2: Get download links from Deezmate
-    const dlRes = await axios.get(`https://api.deezmate.com/dl/${trackId}`);
-    const dlData = dlRes.data;
-
-    if (!dlData.success) {
-      return res.status(404).json({ error: 'Download links not available' });
-    }
-
-    // Combine and send all info
-    return res.json({
-      ...trackInfo,
-      downloads: {
-        mp3: dlData.links.mp3,
-        flac: dlData.links.flac
-      }
     });
 
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Something went wrong' });
+    return res.status(err.response?.status || 500).json({
+      error: 'Failed to process request',
+      details: err.response?.data?.message || err.message,
+      status: err.response?.status || 500
+    });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 });
 
