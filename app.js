@@ -1479,7 +1479,6 @@ app.get('/resolvex', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
