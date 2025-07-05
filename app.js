@@ -1288,11 +1288,14 @@ app.get('/resolvex', async (req, res) => {
   let currentAttempt = 1;
   let mp4UrlFound = false;
   let mp4Url = null;
+  let fallbackUrls = [];
 
   const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
 
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36');
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36'
+  );
 
   try {
     // Step 1: Navigate to pahe.win and extract kwik.si link
@@ -1314,24 +1317,38 @@ app.get('/resolvex', async (req, res) => {
     // Construct kwik.bunniescdn.online URL
     const kwikBunnyURL = `https://kwik.bunniescdn.online/f/${kwikId}`;
 
-    // Step 2: Navigate to kwik.bunniescdn.online URL
+    // Step 2: Intercept requests to detect fallback .mp4 links
     await page.setRequestInterception(true);
     page.on('request', request => {
       const url = request.url();
-      if (url.includes('.mp4') && (url.includes('eu') || url.includes('vault') || url.includes('cdn'))) {
+
+      // Primary detection
+      if (
+        url.includes('.mp4') &&
+        (url.includes('vault') || url.includes('eu') || url.includes('cdn'))
+      ) {
         mp4UrlFound = true;
         mp4Url = url;
       }
+
+      // Fallback capture (even if not used immediately)
+      if (
+        url.includes('.mp4') &&
+        (url.includes('vault') || url.includes('cdn') || url.includes('eu') || url.includes('expires'))
+      ) {
+        fallbackUrls.push(url);
+      }
+
       request.continue();
     });
 
+    // Step 3: Load the mirror site
     await page.goto(kwikBunnyURL, { waitUntil: 'domcontentloaded' });
-
-    await delayg(5000); // Wait for scripts and redirects
+    await delayg(5000); // Let ads/scripts/redirects settle
 
     const buttonSelector = 'button.button.is-uppercase.is-success.is-fullwidth[type="submit"]';
 
-    // Step 3: Retry clicking the button until MP4 URL is found or max retries reached
+    // Step 4: Try clicking the download button
     let buttonClicked = false;
     while (currentAttempt <= maxRetries && !buttonClicked && !mp4UrlFound) {
       try {
@@ -1342,22 +1359,33 @@ app.get('/resolvex', async (req, res) => {
       } catch (err) {
         currentAttempt++;
         if (currentAttempt <= maxRetries && !mp4UrlFound) {
-          await delay(3000);
+          await delayg(3000);
         }
       }
     }
 
-    // Prepare response
+    // Step 5: Fallback if main MP4 not found
+    if (!mp4UrlFound && fallbackUrls.length > 0) {
+      mp4Url = fallbackUrls.find(u =>
+        u.includes('.mp4') &&
+        (u.includes('vault') || u.includes('cdn') || u.includes('eu') || u.includes('expires'))
+      );
+      mp4UrlFound = !!mp4Url;
+    }
+
+    // Step 6: Return response
     const response = { kwikLink };
     if (mp4UrlFound) {
       response.mp4Link = mp4Url;
+    } else if (fallbackUrls.length > 0) {
+      response.fallback = fallbackUrls;
     }
 
     await browser.close();
     return res.status(200).json(response);
   } catch (err) {
     await browser.close();
-    return res.status(500).json({ kwikLink: kwikLink || null, error: err.message });
+    return res.status(500).json({ kwikLink: null, error: err.message });
   }
 });
 
