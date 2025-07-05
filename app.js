@@ -1284,110 +1284,125 @@ app.get('/resolvex', async (req, res) => {
     return res.status(400).json({ error: 'Invalid or missing pahe.win URL' });
   }
 
-  const maxRetries = 3;
-  let currentAttempt = 1;
-  let mp4UrlFound = false;
-  let mp4Url = null;
-  let fallbackUrls = [];
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
+  const randomScroll = async (page) => {
+    await page.evaluate(() => {
+      return new Promise(resolve => {
+        let totalHeight = 0;
+        const distance = 150;
+        const timer = setInterval(() => {
+          window.scrollBy(0, distance);
+          totalHeight += distance;
+          if (totalHeight >= document.body.scrollHeight) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 200);
+      });
+    });
+  };
 
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36'
-  );
+  const spoofFingerprint = async (page) => {
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+    });
+  };
 
+  let browser;
   try {
-    // Step 1: Navigate to pahe.win and extract kwik.si link
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    const page = await browser.newPage();
+    await spoofFingerprint(page);
+
     await page.goto(paheURL, { waitUntil: 'networkidle2' });
+    await delay(2500);
+    await randomScroll(page);
+    await delay(1500);
 
-    await page.waitForFunction(() => {
-      const el = document.querySelector('a.redirect');
-      return el && el.href && el.href.startsWith('https://kwik.si/');
-    }, { timeout: 10000 });
+    const kwikLink = await page.$$eval('a.btn.btn-secondary.btn-block.redirect', links =>
+      links.find(a => a.href.includes('kwik.si'))?.href
+    );
 
-    const kwikLink = await page.$eval('a.redirect', el => el.href);
+    if (!kwikLink) throw new Error('kwik.si link not found on pahe.win');
 
-    // Extract ID from kwik.si URL
     const kwikId = kwikLink.split('/f/')[1];
-    if (!kwikId) {
-      throw new Error('Could not extract ID from kwik.si URL');
-    }
+    if (!kwikId) throw new Error('Invalid kwik.si URL structure');
 
-    // Construct kwik.bunniescdn.online URL
     const kwikBunnyURL = `https://kwik.bunniescdn.online/f/${kwikId}`;
 
-    // Step 2: Intercept requests to detect fallback .mp4 links
+    let mp4Url = null;
+    let mp4UrlFound = false;
+
     await page.setRequestInterception(true);
     page.on('request', request => {
       const url = request.url();
-
-      // Primary detection
-      if (
-        url.includes('.mp4') &&
-        (url.includes('vault') || url.includes('eu') || url.includes('cdn'))
-      ) {
-        mp4UrlFound = true;
+      if (url.endsWith('.mp4') && (url.includes('cdn') || url.includes('vault') || url.includes('eu'))) {
         mp4Url = url;
+        mp4UrlFound = true;
       }
-
-      // Fallback capture (even if not used immediately)
-      if (
-        url.includes('.mp4') &&
-        (url.includes('vault') || url.includes('cdn') || url.includes('eu') || url.includes('expires'))
-      ) {
-        fallbackUrls.push(url);
-      }
-
       request.continue();
     });
 
-    // Step 3: Load the mirror site
     await page.goto(kwikBunnyURL, { waitUntil: 'domcontentloaded' });
-    await delayg(5000); // Let ads/scripts/redirects settle
+    await randomScroll(page);
+    await delay(4000);
 
-    const buttonSelector = 'button.button.is-uppercase.is-success.is-fullwidth[type="submit"]';
+    const selectors = [
+      'button.button.is-uppercase.is-success.is-fullwidth[type="submit"]',
+      'button[type="submit"].button',
+      'button[type="submit"]'
+    ];
 
-    // Step 4: Try clicking the download button
-    let buttonClicked = false;
-    while (currentAttempt <= maxRetries && !buttonClicked && !mp4UrlFound) {
+    let clicked = false;
+    for (const selector of selectors) {
       try {
-        await page.waitForSelector(buttonSelector, { timeout: 20000 });
-        await page.click(buttonSelector);
+        await page.waitForSelector(selector, { timeout: 9000 });
+        await delay(1500);
+        await page.hover(selector);
+        await page.mouse.move(
+          Math.floor(Math.random() * 300) + 100,
+          Math.floor(Math.random() * 300) + 100
+        );
+        await delay(800);
+        await page.click(selector);
         await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-        buttonClicked = true;
+        clicked = true;
+        break;
       } catch (err) {
-        currentAttempt++;
-        if (currentAttempt <= maxRetries && !mp4UrlFound) {
-          await delayg(3000);
-        }
+        continue;
       }
     }
 
-    // Step 5: Fallback if main MP4 not found
-    if (!mp4UrlFound && fallbackUrls.length > 0) {
-      mp4Url = fallbackUrls.find(u =>
-        u.includes('.mp4') &&
-        (u.includes('vault') || u.includes('cdn') || u.includes('eu') || u.includes('expires'))
-      );
-      mp4UrlFound = !!mp4Url;
+    if (!clicked) throw new Error('Submit button not found or failed to click');
+
+    // Wait max 15s for .mp4 to show up
+    let waitTime = 0;
+    while (!mp4UrlFound && waitTime < 15000) {
+      await delay(500);
+      waitTime += 500;
     }
 
-    // Step 6: Return response
     const response = { kwikLink };
-    if (mp4UrlFound) {
-      response.mp4Link = mp4Url;
-    } else if (fallbackUrls.length > 0) {
-      response.fallback = fallbackUrls;
-    }
+    if (mp4UrlFound && mp4Url) response.mp4Link = mp4Url;
 
     await browser.close();
     return res.status(200).json(response);
   } catch (err) {
-    await browser.close();
-    return res.status(500).json({ kwikLink: null, error: err.message });
+    if (browser) await browser.close();
+    return res.status(500).json({ error: err.message });
   }
 });
+
 
 app.get('/embed', async (req, res) => {
     const url = req.query.url;
