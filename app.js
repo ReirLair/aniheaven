@@ -1284,38 +1284,42 @@ app.get('/resolvex', async (req, res) => {
     return res.status(400).json({ error: 'Invalid or missing pahe.win URL' });
   }
 
-  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-  const randomScroll = async (page) => {
-    await page.evaluate(() => {
-      return new Promise(resolve => {
-        let totalHeight = 0;
-        const distance = 150;
-        const timer = setInterval(() => {
-          window.scrollBy(0, distance);
-          totalHeight += distance;
-          if (totalHeight >= document.body.scrollHeight) {
-            clearInterval(timer);
-            resolve();
-          }
-        }, 200);
-      });
-    });
-  };
-
-  const spoofFingerprint = async (page) => {
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1366, height: 768 });
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.chrome = { runtime: {} };
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-    });
-  };
-
   let browser;
+
   try {
+    // Delay helper
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Fingerprint spoofing
+    const spoofFingerprint = async (page) => {
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36');
+      await page.setViewport({ width: 1366, height: 768 });
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        window.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+      });
+    };
+
+    // Scrolling
+    const randomScroll = async (page) => {
+      await page.evaluate(() => {
+        return new Promise(resolve => {
+          let totalHeight = 0;
+          const distance = 150;
+          const timer = setInterval(() => {
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+            if (totalHeight >= document.body.scrollHeight) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 200);
+        });
+      });
+    };
+
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -1401,35 +1405,6 @@ app.get('/resolvex', async (req, res) => {
     if (browser) await browser.close();
     return res.status(500).json({ error: err.message });
   }
-});
-
-
-app.get('/embed', async (req, res) => {
-    const url = req.query.url;
-    if (!url) return res.status(400).send("Missing 'url' query param");
-
-    try {
-        const axiosResponse = await axios.get(url, {
-            responseType: 'stream',
-            headers: {
-                'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
-                ...(req.headers.range ? { Range: req.headers.range } : {}),
-            },
-            validateStatus: () => true // Let non-200 (e.g. 206) pass
-        });
-
-        // Set the headers from the source
-        res.status(axiosResponse.status);
-        for (const [key, value] of Object.entries(axiosResponse.headers)) {
-            res.setHeader(key, value);
-        }
-
-        // Pipe the stream
-        axiosResponse.data.pipe(res);
-    } catch (error) {
-        console.error('Proxy error:', error.message);
-        res.status(500).send('Proxy error: ' + error.message);
-    }
 });
 
 app.listen(PORT, () => {
