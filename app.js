@@ -1320,6 +1320,19 @@ app.get('/resolvex', async (req, res) => {
       });
     };
 
+    // Enhanced MP4 URL validator
+    const isValidMP4Url = (url) => {
+      return url.endsWith('.mp4') && (
+        url.includes('nextcdn.org') ||
+        url.includes('vault') || 
+        url.includes('eu-') || 
+        url.includes('bunny') ||
+        url.includes('kwik') ||
+        url.includes('cdn') ||
+        url.match(/https?:\/\/[^\/]+\/get\/\d+\/.*\.mp4/i) // Pattern for your example URL
+      );
+    };
+
     browser = await puppeteer.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -1345,98 +1358,79 @@ app.get('/resolvex', async (req, res) => {
     const kwikBunnyURL = `https://kwik.bunniescdn.online/f/${kwikId}`;
 
     let mp4Url = null;
-    let mp4UrlFound = false;
-    let redirectChain = [];
-    let capturedUrls = new Set();
+    let responseHandled = false;
 
-    // Enhanced request interception to capture redirects and MP4 links
+    // Function to handle immediate response when MP4 is found
+    const handleMP4Found = async (url) => {
+      if (!responseHandled && isValidMP4Url(url)) {
+        responseHandled = true;
+        mp4Url = url;
+        console.log('MP4 URL found, responding immediately:', url);
+        
+        await browser.close();
+        return res.status(200).json({ 
+          kwikLink,
+          mp4Link: url
+        });
+      }
+    };
+
+    // Enhanced request interception with immediate response
     await page.setRequestInterception(true);
-    page.on('request', request => {
+    page.on('request', async (request) => {
       const url = request.url();
       
-      // Track all requests for debugging
-      if (url.includes('kwik') || url.includes('vault') || url.includes('cdn') || url.endsWith('.mp4')) {
-        redirectChain.push(url);
-      }
-      
-      // Capture MP4 URLs from various CDN sources
-      if (url.endsWith('.mp4') && (
-        url.includes('cdn') || 
-        url.includes('vault') || 
-        url.includes('eu') || 
-        url.includes('bunny') ||
-        url.includes('kwik') ||
-        url.match(/\.(mp4|mkv|avi|mov)(\?|$)/i)
-      )) {
-        mp4Url = url;
-        mp4UrlFound = true;
-        capturedUrls.add(url);
-        console.log('MP4 URL captured:', url);
+      // Check for MP4 URLs and respond immediately
+      if (isValidMP4Url(url)) {
+        await handleMP4Found(url);
+        return;
       }
       
       request.continue();
     });
 
-    // Enhanced response interception to catch redirects
-    page.on('response', response => {
+    // Enhanced response interception with immediate response
+    page.on('response', async (response) => {
       const url = response.url();
       const status = response.status();
       
-      // Track redirects (3xx status codes)
-      if (status >= 300 && status < 400) {
-        const location = response.headers()['location'];
-        if (location) {
-          redirectChain.push(`${url} -> ${location}`);
-          
-          // Check if redirect location is an MP4
-          if (location.endsWith('.mp4') && (
-            location.includes('cdn') || 
-            location.includes('vault') || 
-            location.includes('eu') ||
-            location.includes('bunny')
-          )) {
-            mp4Url = location;
-            mp4UrlFound = true;
-            capturedUrls.add(location);
-            console.log('MP4 URL captured from redirect:', location);
-          }
-        }
+      // Check direct response URLs
+      if (isValidMP4Url(url)) {
+        await handleMP4Found(url);
+        return;
       }
       
-      // Also check final response URLs
-      if (url.endsWith('.mp4') && (
-        url.includes('cdn') || 
-        url.includes('vault') || 
-        url.includes('eu') ||
-        url.includes('bunny')
-      )) {
-        mp4Url = url;
-        mp4UrlFound = true;
-        capturedUrls.add(url);
-        console.log('MP4 URL captured from response:', url);
+      // Check redirects (3xx status codes)
+      if (status >= 300 && status < 400) {
+        const location = response.headers()['location'];
+        if (location && isValidMP4Url(location)) {
+          await handleMP4Found(location);
+          return;
+        }
       }
     });
 
     // Navigate to kwik page
     await page.goto(kwikBunnyURL, { waitUntil: 'domcontentloaded' });
-    await randomScroll(page);
-    await delay(4000);
-
-    // Wait for page to fully load and check for any immediate MP4 links
-    await delay(2000);
     
-    // Check if MP4 is already available in page content
+    // Quick check if response already handled
+    if (responseHandled) return;
+    
+    await randomScroll(page);
+    await delay(3000);
+
+    // Quick check again
+    if (responseHandled) return;
+
+    // Check page content for MP4 links
     try {
       const pageContent = await page.content();
-      const mp4Match = pageContent.match(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi);
-      if (mp4Match && mp4Match.length > 0) {
-        for (const match of mp4Match) {
-          if (match.includes('cdn') || match.includes('vault') || match.includes('eu')) {
-            mp4Url = match;
-            mp4UrlFound = true;
-            capturedUrls.add(match);
-            console.log('MP4 URL found in page content:', match);
-            break;
+      const mp4Matches = pageContent.match(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi);
+      if (mp4Matches && mp4Matches.length > 0) {
+        for (const match of mp4Matches) {
+          if (isValidMP4Url(match)) {
+            await handleMP4Found(match);
+            return;
           }
         }
       }
@@ -1453,14 +1447,13 @@ app.get('/resolvex', async (req, res) => {
       'input[type="submit"]',
       'a.btn.btn-primary',
       '.submit-btn',
-      '#submit',
-      'button:contains("Submit")',
-      'button:contains("Continue")',
-      'button:contains("Download")'
+      '#submit'
     ];
 
     let clicked = false;
     for (const selector of selectors) {
+      if (responseHandled) break;
+      
       try {
         await page.waitForSelector(selector, { timeout: 5000 });
         await delay(1500);
@@ -1476,15 +1469,8 @@ app.get('/resolvex', async (req, res) => {
         );
         await delay(800);
         
-        // Click and wait for navigation or MP4 capture
-        await Promise.all([
-          page.click(selector),
-          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {
-            // Navigation might not occur if it's a redirect chain
-            console.log('Navigation timeout - continuing to check for MP4');
-          })
-        ]);
-        
+        // Click the submit button
+        await page.click(selector);
         clicked = true;
         console.log('Successfully clicked submit button:', selector);
         break;
@@ -1494,44 +1480,33 @@ app.get('/resolvex', async (req, res) => {
       }
     }
 
-    if (!clicked) {
-      console.log('No submit button found, checking for direct MP4 links...');
-    }
-
-    // Extended wait for MP4 URLs with multiple checks
+    // Wait for redirects and MP4 capture after submit
     let waitTime = 0;
-    const maxWaitTime = 25000; // Increased wait time
+    const maxWaitTime = 15000; // Reduced wait time since we respond immediately
     
-    while (!mp4UrlFound && waitTime < maxWaitTime) {
+    while (!responseHandled && waitTime < maxWaitTime) {
       await delay(1000);
       waitTime += 1000;
       
       // Periodic check for MP4 in page content
-      if (waitTime % 5000 === 0) {
+      if (waitTime % 3000 === 0) {
         try {
           const currentUrl = page.url();
-          console.log('Current page URL:', currentUrl);
           
           // Check if we're on a direct MP4 URL
-          if (currentUrl.endsWith('.mp4')) {
-            mp4Url = currentUrl;
-            mp4UrlFound = true;
-            capturedUrls.add(currentUrl);
-            console.log('Direct MP4 URL found:', currentUrl);
-            break;
+          if (isValidMP4Url(currentUrl)) {
+            await handleMP4Found(currentUrl);
+            return;
           }
           
           // Check page content again
           const pageContent = await page.content();
-          const mp4Match = pageContent.match(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi);
-          if (mp4Match && mp4Match.length > 0) {
-            for (const match of mp4Match) {
-              if (match.includes('cdn') || match.includes('vault') || match.includes('eu')) {
-                mp4Url = match;
-                mp4UrlFound = true;
-                capturedUrls.add(match);
-                console.log('MP4 URL found in page content (retry):', match);
-                break;
+          const mp4Matches = pageContent.match(/(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi);
+          if (mp4Matches && mp4Matches.length > 0) {
+            for (const match of mp4Matches) {
+              if (isValidMP4Url(match)) {
+                await handleMP4Found(match);
+                return;
               }
             }
           }
@@ -1541,33 +1516,21 @@ app.get('/resolvex', async (req, res) => {
       }
     }
 
-    // Final attempt: check all captured URLs for the best MP4 link
-    if (!mp4UrlFound && capturedUrls.size > 0) {
-      const urlArray = Array.from(capturedUrls);
-      mp4Url = urlArray.find(url => url.includes('vault')) || 
-               urlArray.find(url => url.includes('eu')) ||
-               urlArray.find(url => url.includes('cdn')) ||
-               urlArray[0];
-      mp4UrlFound = true;
-      console.log('Using captured URL as fallback:', mp4Url);
+    // If we reach here, no MP4 was found
+    if (!responseHandled) {
+      await browser.close();
+      return res.status(200).json({ 
+        kwikLink,
+        error: 'MP4 link not found after processing'
+      });
     }
 
-    const response = { 
-      kwikLink,
-      redirectChain: redirectChain.length > 0 ? redirectChain : undefined,
-      capturedUrls: Array.from(capturedUrls)
-    };
-    
-    if (mp4UrlFound && mp4Url) {
-      response.mp4Link = mp4Url;
-    }
-
-    await browser.close();
-    return res.status(200).json(response);
   } catch (err) {
     if (browser) await browser.close();
     console.error('Error in resolvex:', err.message);
-    return res.status(500).json({ error: err.message });
+    if (!responseHandled) {
+      return res.status(500).json({ error: err.message });
+    }
   }
 });
 app.listen(PORT, () => {
