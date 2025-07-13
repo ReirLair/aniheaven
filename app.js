@@ -1503,6 +1503,79 @@ app.get('/resolvex', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+app.get('/api/xconvert', async (req, res) => {
+  const spotifyUrl = req.query.url;
+  if (!spotifyUrl) {
+    return res.status(400).json({ error: true, message: 'Missing `url` query parameter.' });
+  }
+
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled'
+    ]
+  });
+
+  try {
+    const page = await browser.newPage();
+
+    // Spoof headers & user agent
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+    );
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'DNT': '1',
+      'Upgrade-Insecure-Requests': '1'
+    });
+    await page.setViewport({ width: 1366, height: 768 });
+
+    // Further spoofing before any site JS runs
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.navigator.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    });
+
+    // Visit homepage
+    await page.goto('https://spotmate.online/', { waitUntil: 'networkidle2' });
+
+    // Grab CSRF token
+    const cookies = await page.cookies();
+    const xsrfCookie = cookies.find(c => c.name === 'XSRF-TOKEN');
+    if (!xsrfCookie) {
+      return res.status(500).json({ error: true, message: 'CSRF token not found' });
+    }
+
+    const csrfToken = decodeURIComponent(xsrfCookie.value);
+
+    // Submit conversion request
+    const result = await page.evaluate(async (csrfToken, spotifyUrl) => {
+      const response = await fetch('https://spotmate.online/convert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken
+        },
+        body: JSON.stringify({ urls: spotifyUrl })
+      });
+
+      return await response.json();
+    }, csrfToken, spotifyUrl);
+
+    res.json(result);
+  } catch (err) {
+    console.error('❌ Error:', err);
+    res.status(500).json({ error: true, message: err.message });
+  } finally {
+    await browser.close();
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
