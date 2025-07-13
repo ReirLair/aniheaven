@@ -5,6 +5,8 @@ const { executablePath } = require('puppeteer');
 const axios = require('axios');
 const qs = require('qs');
 const fs = require('fs');
+const { createCursor } = require('ghost-cursor');
+const crypto = require('crypto');
 const FormData = require('form-data');
 const path = require('path');
 const crypto = require('crypto');
@@ -1506,68 +1508,408 @@ app.get('/resolvex', async (req, res) => {
 
 app.get('/api/xconvert', async (req, res) => {
   const spotifyUrl = req.query.url;
+  
   if (!spotifyUrl) {
     return res.status(400).json({ error: true, message: 'Missing `url` query parameter.' });
   }
 
+  // Configure stealth plugin with advanced options for this request
+  puppeteer.use(StealthPlugin({
+    enabledEvasions: [
+      'chrome.app',
+      'chrome.csi',
+      'chrome.loadTimes',
+      'chrome.runtime',
+      'iframe.contentWindow',
+      'media.codecs',
+      'navigator.hardwareConcurrency',
+      'navigator.languages',
+      'navigator.permissions',
+      'navigator.plugins',
+      'navigator.webdriver',
+      'sourceurl',
+      'webgl.vendor',
+      'window.outerdimensions'
+    ]
+  }));
+
+  // Common user agents and viewports for rotation
+  const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  ];
+
+  const VIEWPORTS = [
+    { width: 1920, height: 1080 },
+    { width: 1366, height: 768 },
+    { width: 1536, height: 864 },
+    { width: 1440, height: 900 }
+  ];
+
+  // Generate random fingerprint components
+  function generateFingerprint() {
+    const userAgent = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+    const viewport = VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)];
+    
+    return {
+      userAgent,
+      viewport,
+      timezone: 'America/New_York',
+      locale: 'en-US',
+      platform: userAgent.includes('Windows') ? 'Win32' : userAgent.includes('Mac') ? 'MacIntel' : 'Linux x86_64',
+      hardwareConcurrency: Math.floor(Math.random() * 8) + 2,
+      deviceMemory: [2, 4, 8, 16][Math.floor(Math.random() * 4)]
+    };
+  }
+
+  // Advanced page setup with comprehensive fingerprinting
+  async function setupStealthPage(page, fingerprint) {
+    // Set user agent and viewport
+    await page.setUserAgent(fingerprint.userAgent);
+    await page.setViewport(fingerprint.viewport);
+    
+    // Set timezone
+    await page.emulateTimezone(fingerprint.timezone);
+    
+    // Advanced HTTP headers
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'max-age=0',
+      'Connection': 'keep-alive',
+      'DNT': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': `"${fingerprint.platform}"`
+    });
+
+    // Comprehensive navigator and window spoofing
+    await page.evaluateOnNewDocument((fp) => {
+      // Navigator properties
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+      Object.defineProperty(navigator, 'language', { get: () => 'en-US' });
+      Object.defineProperty(navigator, 'platform', { get: () => fp.platform });
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => fp.hardwareConcurrency });
+      Object.defineProperty(navigator, 'deviceMemory', { get: () => fp.deviceMemory });
+      Object.defineProperty(navigator, 'doNotTrack', { get: () => '1' });
+      Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0 });
+      Object.defineProperty(navigator, 'cookieEnabled', { get: () => true });
+      Object.defineProperty(navigator, 'onLine', { get: () => true });
+      
+      // Chrome object
+      window.navigator.chrome = {
+        runtime: {},
+        loadTimes: function() {
+          return {
+            requestTime: performance.now() / 1000,
+            startLoadTime: performance.now() / 1000,
+            commitLoadTime: performance.now() / 1000,
+            finishDocumentLoadTime: performance.now() / 1000,
+            finishLoadTime: performance.now() / 1000,
+            firstPaintTime: performance.now() / 1000,
+            firstPaintAfterLoadTime: 0,
+            navigationType: 'Other'
+          };
+        },
+        csi: function() {
+          return {
+            pageT: performance.now(),
+            startE: performance.now(),
+            tran: 15
+          };
+        },
+        app: {
+          isInstalled: false,
+          InstallState: {
+            DISABLED: 'disabled',
+            INSTALLED: 'installed',
+            NOT_INSTALLED: 'not_installed'
+          },
+          RunningState: {
+            CANNOT_RUN: 'cannot_run',
+            READY_TO_RUN: 'ready_to_run',
+            RUNNING: 'running'
+          }
+        }
+      };
+
+      // Plugin spoofing
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => ({
+          length: 3,
+          0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+          1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+          2: { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+        })
+      });
+
+      // WebGL fingerprinting
+      const getParameter = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function(parameter) {
+        if (parameter === 37445) return 'Intel Inc.';
+        if (parameter === 37446) return 'Intel(R) HD Graphics 630';
+        return getParameter.call(this, parameter);
+      };
+
+      // Canvas fingerprinting protection
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function() {
+        const context = this.getContext('2d');
+        context.fillStyle = 'rgba(0,0,0,0.1)';
+        context.fillRect(0, 0, 1, 1);
+        return originalToDataURL.apply(this, arguments);
+      };
+
+      // Screen properties
+      Object.defineProperty(screen, 'width', { get: () => fp.viewport.width });
+      Object.defineProperty(screen, 'height', { get: () => fp.viewport.height });
+      Object.defineProperty(screen, 'availWidth', { get: () => fp.viewport.width });
+      Object.defineProperty(screen, 'availHeight', { get: () => fp.viewport.height - 40 });
+      Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+      Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
+
+      // Remove automation indicators
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Object;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Proxy;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_JSON;
+      delete window.cdc_adoQpoasnfa76pfcZLmcfl_Function;
+      
+      // Performance timing spoofing
+      Object.defineProperty(window.performance, 'timing', {
+        get: () => ({
+          navigationStart: Date.now() - Math.floor(Math.random() * 1000),
+          unloadEventStart: 0,
+          unloadEventEnd: 0,
+          redirectStart: 0,
+          redirectEnd: 0,
+          fetchStart: Date.now() - Math.floor(Math.random() * 500),
+          domainLookupStart: Date.now() - Math.floor(Math.random() * 400),
+          domainLookupEnd: Date.now() - Math.floor(Math.random() * 300),
+          connectStart: Date.now() - Math.floor(Math.random() * 200),
+          connectEnd: Date.now() - Math.floor(Math.random() * 100),
+          secureConnectionStart: Date.now() - Math.floor(Math.random() * 100),
+          requestStart: Date.now() - Math.floor(Math.random() * 50),
+          responseStart: Date.now() - Math.floor(Math.random() * 25),
+          responseEnd: Date.now() - Math.floor(Math.random() * 10),
+          domLoading: Date.now() - Math.floor(Math.random() * 10),
+          domInteractive: Date.now() - Math.floor(Math.random() * 5),
+          domContentLoadedEventStart: Date.now() - Math.floor(Math.random() * 5),
+          domContentLoadedEventEnd: Date.now() - Math.floor(Math.random() * 3),
+          domComplete: Date.now() - Math.floor(Math.random() * 2),
+          loadEventStart: Date.now() - Math.floor(Math.random() * 2),
+          loadEventEnd: Date.now() - Math.floor(Math.random() * 1)
+        })
+      });
+
+      // Permissions API spoofing
+      const originalQuery = navigator.permissions.query;
+      navigator.permissions.query = function(parameters) {
+        return originalQuery.call(this, parameters).then(result => {
+          if (parameters.name === 'notifications') {
+            result.state = 'default';
+          }
+          return result;
+        });
+      };
+
+      // Media devices spoofing
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const originalEnumerateDevices = navigator.mediaDevices.enumerateDevices;
+        navigator.mediaDevices.enumerateDevices = function() {
+          return originalEnumerateDevices.call(this).then(devices => [
+            { deviceId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), groupId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), kind: 'audioinput', label: 'Default - Microphone' },
+            { deviceId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), groupId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), kind: 'audiooutput', label: 'Default - Speakers' },
+            { deviceId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), groupId: crypto.getRandomValues(new Uint32Array(1))[0].toString(16), kind: 'videoinput', label: 'Default - Camera' }
+          ]);
+        };
+      }
+
+      // Battery API spoofing
+      if (navigator.getBattery) {
+        const originalGetBattery = navigator.getBattery;
+        navigator.getBattery = function() {
+          return originalGetBattery.call(this).then(battery => ({
+            charging: true,
+            chargingTime: Infinity,
+            dischargingTime: Infinity,
+            level: 0.5 + Math.random() * 0.5,
+            addEventListener: battery.addEventListener.bind(battery),
+            removeEventListener: battery.removeEventListener.bind(battery)
+          }));
+        };
+      }
+
+      // Touch events spoofing
+      if (!window.TouchEvent) {
+        window.TouchEvent = function TouchEvent() {};
+      }
+
+      // Speech synthesis spoofing
+      if (window.speechSynthesis) {
+        const originalGetVoices = window.speechSynthesis.getVoices;
+        window.speechSynthesis.getVoices = function() {
+          return [
+            { name: 'Microsoft David Desktop', lang: 'en-US', default: true, localService: true, voiceURI: 'Microsoft David Desktop' },
+            { name: 'Microsoft Zira Desktop', lang: 'en-US', default: false, localService: true, voiceURI: 'Microsoft Zira Desktop' }
+          ];
+        };
+      }
+
+    }, fingerprint);
+
+    // Add random mouse movements and human-like behavior
+    const cursor = createCursor(page);
+    
+    // Override page.click to use human-like cursor movements
+    const originalClick = page.click;
+    page.click = async function(selector, options = {}) {
+      await cursor.click(selector, options);
+    };
+
+    return { page, cursor };
+  }
+
+  // Human-like delay function
+  function randomDelay(min = 1000, max = 3000) {
+    return new Promise(resolve => {
+      setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min);
+    });
+  }
+
+  // Generate unique fingerprint for this request
+  const fingerprint = generateFingerprint();
+  
   const browser = await puppeteer.launch({
     headless: 'new',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--disable-blink-features=AutomationControlled'
-    ]
+      '--disable-blink-features=AutomationControlled',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--disable-extensions',
+      '--disable-plugins',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--disable-gpu',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-field-trial-config',
+      '--disable-back-forward-cache',
+      '--disable-hang-monitor',
+      '--disable-prompt-on-repost',
+      '--disable-sync',
+      '--disable-translate',
+      '--disable-default-apps',
+      '--disable-component-update',
+      '--disable-background-networking',
+      '--disable-breakpad',
+      '--disable-domain-reliability',
+      '--disable-features=TranslateUI',
+      '--disable-ipc-flooding-protection',
+      '--disable-client-side-phishing-detection',
+      '--disable-popup-blocking',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-field-trial-config',
+      '--disable-back-forward-cache',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--no-pings',
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--ignore-gpu-blacklist',
+      '--ignore-certificate-errors',
+      '--ignore-ssl-errors',
+      '--allow-running-insecure-content',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--window-size=1920,1080'
+    ],
+    ignoreDefaultArgs: ['--enable-automation'],
+    defaultViewport: null
   });
 
   try {
     const page = await browser.newPage();
-
-    // Spoof headers & user agent
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    );
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'DNT': '1',
-      'Upgrade-Insecure-Requests': '1'
+    
+    // Setup comprehensive stealth configuration
+    const { cursor } = await setupStealthPage(page, fingerprint);
+    
+    // Add random delay before navigation
+    await randomDelay(500, 1500);
+    
+    // Navigate to homepage with realistic timing
+    await page.goto('https://spotmate.online/', { 
+      waitUntil: 'networkidle2',
+      timeout: 30000 
     });
-    await page.setViewport({ width: 1366, height: 768 });
-
-    // Further spoofing before any site JS runs
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.navigator.chrome = { runtime: {} };
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    
+    // Simulate human-like behavior - random scroll and wait
+    await page.evaluate(() => {
+      window.scrollBy(0, Math.floor(Math.random() * 200));
     });
-
-    // Visit homepage
-    await page.goto('https://spotmate.online/', { waitUntil: 'networkidle2' });
-
-    // Grab CSRF token
+    
+    await randomDelay(1000, 2000);
+    
+    // Get CSRF token
     const cookies = await page.cookies();
     const xsrfCookie = cookies.find(c => c.name === 'XSRF-TOKEN');
+    
     if (!xsrfCookie) {
       return res.status(500).json({ error: true, message: 'CSRF token not found' });
     }
-
+    
     const csrfToken = decodeURIComponent(xsrfCookie.value);
-
-    // Submit conversion request
-    const result = await page.evaluate(async (csrfToken, spotifyUrl) => {
+    
+    // Add another human-like delay
+    await randomDelay(800, 1800);
+    
+    // Execute the conversion request with enhanced headers
+    const result = await page.evaluate(async (csrfToken, spotifyUrl, userAgent) => {
       const response = await fetch('https://spotmate.online/convert', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken
+          'X-CSRF-TOKEN': csrfToken,
+          'User-Agent': userAgent,
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'DNT': '1',
+          'Origin': 'https://spotmate.online',
+          'Pragma': 'no-cache',
+          'Referer': 'https://spotmate.online/',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin',
+          'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"'
         },
         body: JSON.stringify({ urls: spotifyUrl })
       });
-
+      
       return await response.json();
-    }, csrfToken, spotifyUrl);
-
+    }, csrfToken, spotifyUrl, fingerprint.userAgent);
+    
     res.json(result);
+    
   } catch (err) {
     console.error('❌ Error:', err);
     res.status(500).json({ error: true, message: err.message });
